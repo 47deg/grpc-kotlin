@@ -16,6 +16,7 @@
 
 package io.grpc.kotlin.generator
 
+import arrow.fx.coroutines.stream.Stream
 import com.google.common.annotations.VisibleForTesting
 import com.google.protobuf.Descriptors.MethodDescriptor
 import com.google.protobuf.Descriptors.ServiceDescriptor
@@ -31,8 +32,6 @@ import com.squareup.kotlinpoet.TypeVariableName
 import com.squareup.kotlinpoet.asClassName
 import com.squareup.kotlinpoet.asTypeName
 import io.grpc.CallOptions
-import io.grpc.Channel as GrpcChannel
-import io.grpc.Metadata as GrpcMetadata
 import io.grpc.MethodDescriptor.MethodType
 import io.grpc.Status
 import io.grpc.StatusException
@@ -49,7 +48,8 @@ import io.grpc.kotlin.generator.protoc.member
 import io.grpc.kotlin.generator.protoc.methodName
 import io.grpc.kotlin.generator.protoc.of
 import io.grpc.kotlin.generator.protoc.serviceName
-import kotlinx.coroutines.flow.Flow
+import io.grpc.Channel as GrpcChannel
+import io.grpc.Metadata as GrpcMetadata
 
 /**
  * Logic for generating gRPC stubs for Kotlin.
@@ -57,7 +57,8 @@ import kotlinx.coroutines.flow.Flow
 @VisibleForTesting
 class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(config) {
   companion object {
-    private const val STUB_CLASS_SUFFIX = "CoroutineStub"
+    //private const val STUB_CLASS_SUFFIX = "CoroutineStub"
+    private const val STUB_CLASS_SUFFIX = "ArrowCoroutineStub"
     private val UNARY_PARAMETER_NAME = MemberSimpleName("request")
     private val STREAMING_PARAMETER_NAME = MemberSimpleName("requests")
     private val GRPC_CHANNEL_PARAMETER_NAME = MemberSimpleName("channel")
@@ -69,7 +70,7 @@ class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(co
       .defaultValue("%M", CallOptions::class.member("DEFAULT"))
       .build()
 
-    private val FLOW = Flow::class.asClassName()
+    private val ARROW_STREAM = Stream::class.asClassName()
 
     private val UNARY_RPC_HELPER = ClientCalls::class.member("unaryRpc")
     private val CLIENT_STREAMING_RPC_HELPER = ClientCalls::class.member("clientStreamingRpc")
@@ -157,7 +158,7 @@ class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(co
     val name = method.methodName.toMemberSimpleName()
     val requestType = method.inputType.messageClass()
     val parameter = if (method.isClientStreaming) {
-      ParameterSpec.of(STREAMING_PARAMETER_NAME, FLOW.parameterizedBy(requestType))
+      ParameterSpec.of(STREAMING_PARAMETER_NAME, ARROW_STREAM.parameterizedBy(requestType))
     } else {
       ParameterSpec.of(UNARY_PARAMETER_NAME, requestType)
     }
@@ -165,7 +166,7 @@ class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(co
     val responseType = method.outputType.messageClass()
 
     val returnType =
-      if (method.isServerStreaming) FLOW.parameterizedBy(responseType) else responseType
+      if (method.isServerStreaming) ARROW_STREAM.parameterizedBy(responseType) else responseType
 
     val helperMethod = RPC_HELPER[method.type] ?: throw IllegalArgumentException()
 
@@ -207,7 +208,7 @@ class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(co
   ): CodeBlock {
     val kDocBindings = mapOf(
       "parameter" to parameter,
-      "flow" to Flow::class,
+      "flow" to Stream::class,
       "status" to Status::class,
       "statusException" to StatusException::class
     )
@@ -257,7 +258,8 @@ class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(co
           """.trimIndent()
         )
       }
-      else -> {}
+      else -> {
+      }
     }
 
     kDocComponents.add(

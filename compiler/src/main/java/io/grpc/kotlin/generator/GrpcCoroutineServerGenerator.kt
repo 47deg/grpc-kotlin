@@ -16,6 +16,7 @@
 
 package io.grpc.kotlin.generator
 
+import arrow.fx.coroutines.stream.Stream
 import com.google.common.annotations.VisibleForTesting
 import com.google.protobuf.Descriptors.MethodDescriptor
 import com.google.protobuf.Descriptors.ServiceDescriptor
@@ -43,19 +44,18 @@ import io.grpc.kotlin.generator.protoc.declarations
 import io.grpc.kotlin.generator.protoc.methodName
 import io.grpc.kotlin.generator.protoc.of
 import io.grpc.kotlin.generator.protoc.serviceName
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.Flow
+import java.util.concurrent.CancellationException
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
 /**
  * Generator for abstract classes of the form `MyServiceCoroutineImplBase`.
  */
-class GrpcCoroutineServerGenerator(config: GeneratorConfig): ServiceCodeGenerator(config) {
+class GrpcCoroutineServerGenerator(config: GeneratorConfig) : ServiceCodeGenerator(config) {
   companion object {
     private const val IMPL_BASE_SUFFIX = "CoroutineImplBase"
 
-    private val FLOW: ClassName = Flow::class.asClassName()
+    private val ARROW_STREAM: ClassName = Stream::class.asClassName()
     private val UNARY_REQUEST_NAME: MemberSimpleName = MemberSimpleName("request")
     private val STREAMING_REQUEST_NAME: MemberSimpleName = MemberSimpleName("requests")
 
@@ -145,7 +145,7 @@ class GrpcCoroutineServerGenerator(config: GeneratorConfig): ServiceCodeGenerato
   fun serviceMethodStub(method: MethodDescriptor): MethodImplStub = with(config) {
     val requestType = method.inputType.messageClass()
     val requestParam = if (method.isClientStreaming) {
-      ParameterSpec.of(STREAMING_REQUEST_NAME, FLOW.parameterizedBy(requestType))
+      ParameterSpec.of(STREAMING_REQUEST_NAME, ARROW_STREAM.parameterizedBy(requestType))
     } else {
       ParameterSpec.of(UNARY_REQUEST_NAME, requestType)
     }
@@ -162,7 +162,7 @@ class GrpcCoroutineServerGenerator(config: GeneratorConfig): ServiceCodeGenerato
 
     val responseType = method.outputType.messageClass()
     if (method.isServerStreaming) {
-      methodSpecBuilder.returns(FLOW.parameterizedBy(responseType))
+      methodSpecBuilder.returns(ARROW_STREAM.parameterizedBy(responseType))
     } else {
       methodSpecBuilder.returns(responseType)
       methodSpecBuilder.addModifiers(KModifier.SUSPEND)
@@ -202,7 +202,7 @@ class GrpcCoroutineServerGenerator(config: GeneratorConfig): ServiceCodeGenerato
     val kDocBindings = mapOf(
       "requestParam" to requestParam,
       "methodName" to method.fullName,
-      "flow" to FLOW,
+      "flow" to ARROW_STREAM,
       "status" to Status::class,
       "statusException" to StatusException::class,
       "cancellationException" to CancellationException::class,
