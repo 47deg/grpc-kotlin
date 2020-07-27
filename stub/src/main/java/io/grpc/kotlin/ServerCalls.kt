@@ -16,7 +16,6 @@
 
 package io.grpc.kotlin
 
-import arrow.core.extensions.either.applicativeError.raiseError
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
 import arrow.fx.coroutines.stream.Stream.Companion.emits
@@ -193,54 +192,56 @@ object ServerCalls {
    * channel-based implementation within the specified [CoroutineScope] (and/or a subscope).
    */
   private fun <RequestT, ResponseT> serverCallHandler(
-    context: CoroutineContext,
+    context: CoroutineContext, // TODO: remove context
     implementation: (Stream<RequestT>) -> Stream<ResponseT>
   ): ServerCallHandler<RequestT, ResponseT> =
     ServerCallHandler { call, _ ->
       serverCallListener(
-        context
-          + CoroutineContextServerInterceptor.COROUTINE_CONTEXT_KEY.get()
-          + GrpcContextElement.current(),
         call,
         implementation
       )
     }
 
-  private suspend fun <RequestT, ResponseT> serverCallListener(
-    context: CoroutineContext,
+  private fun <RequestT, ResponseT> serverCallListener(
     call: ServerCall<RequestT, ResponseT>,
     implementation: (Stream<RequestT>) -> Stream<ResponseT>
-  ): ServerCall.Listener<RequestT> =
-    effect {
-      call.sendHeaders(GrpcMetadata())
+  ): ServerCall.Listener<RequestT> {
 
-      val readiness = Readiness { call.isReady }
-      val requestsChannel = Queue.bounded<RequestT>(1)
+    call.sendHeaders(GrpcMetadata())
 
-      val requestsStarted = AtomicBoolean(false) // enforces read-once
+    val readiness = Readiness { call.isReady }
+    val requestsChannel: Queue<RequestT> = Queue.bounded(1)
 
-      val requests = effect<RequestT> {
-        check(requestsStarted.compareAndSet(false, true)) {
-          "requests flow can only be collected once"
-        }
+    val requestsStarted = AtomicBoolean(false) // enforces read-once
 
+    val requests: Stream<RequestT> = effect<RequestT> {
+      check(requestsStarted.compareAndSet(false, true)) {
+        "requests flow can only be collected once"
+      }
+
+      call.request(1)
+      requestsChannel.dequeue().compile().lastOrError().let {
+        emits(it)
         call.request(1)
-        requestsChannel.dequeue().compile().lastOrError().let {
-          emits(it)
-          call.request(1)
-          it
-        }
-      }.handleErrorWith {
+        it
+      }
+    }.handleErrorWith {
 //        requestsChannel.cancel(
 //          CancellationException("Exception thrown while collecting requests", e)
 //        )
-        call.request(1) // make sure we don't cause backpressure
-        raiseError(it)
-      }
+      call.request(1) // make sure we don't cause backpressure
+      raiseError(it)
+    }
 
-      val rpcJob = effect<Stream<ResponseT>> {
-        implementation(requests)
-      }.handleErrorWith { cause ->
+    val rpcJob: Stream<ResponseT> = effect {
+      implementation(requests)
+    }.flatten()
+      .effectMap {
+        readiness.suspendUntilReady()
+        call.sendMessage(it)
+        it
+      }.scope()
+      .handleErrorWith { cause ->
         val closeStatus = when (cause) {
           is CancellationException -> Status.CANCELLED.withCause(cause)
           else -> Status.fromThrowable(cause)
@@ -248,49 +249,43 @@ object ServerCalls {
         val trailers = Status.trailersFromThrowable(cause)
         call.close(closeStatus, trailers)
         raiseError(cause)
-      }.flatten()
-        .compile()
-        .lastOrNull()
-        ?.let {
-          readiness.suspendUntilReady()
-          call.sendMessage(it)
-        }
+      }
 
-      object : ServerCall.Listener<RequestT>() {
-        var isReceiving = true
+    return object : ServerCall.Listener<RequestT>() {
+      var isReceiving = true
 
-        override fun onCancel() {
-          //rpcScope.cancel("Cancellation received from client")
-          rpcJob?.raiseError<Unit, Unit>()
-        }
+      override fun onCancel() {
+        //rpcScope.cancel("Cancellation received from client")
+        rpcJob.interruptScope()
+      }
 
-        override fun onMessage(message: RequestT) {
-          effect {
-            if (isReceiving) {
-              if (!requestsChannel.offer1(message)) {
-                raiseError<Exception>(Exception("onMessage should never be called when requestsChannel is unready"))
-                  .compile()
-                  .drain()
-              }
+      override fun onMessage(message: RequestT) {
+        effect {
+          if (isReceiving) {
+            if (!requestsChannel.offer1(message)) {
+              raiseError<Exception>(Exception("onMessage should never be called when requestsChannel is unready"))
+                .compile()
+                .drain()
             }
-          }.handleErrorWith {
-            // we don't want any more client input; swallow it
-            isReceiving = false
-            unit
           }
-          if (!isReceiving) {
-            call.request(1) // do not exert backpressure
-          }
+        }.handleErrorWith {
+          // we don't want any more client input; swallow it
+          isReceiving = false
+          unit
         }
-
-        override fun onHalfClose() {
-          requestsChannel.dequeue()
-        }
-
-        override fun onReady() {
-          readiness.onReady()
+        if (!isReceiving) {
+          call.request(1) // do not exert backpressure
         }
       }
-    }.compile().lastOrError()
+
+      override fun onHalfClose() {
+        requestsChannel.dequeue()
+      }
+
+      override fun onReady() {
+        readiness.onReady()
+      }
+    }
+  }
 }
 
