@@ -18,6 +18,7 @@ package io.grpc.kotlin
 
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
+import arrow.fx.coroutines.stream.Stream.Companion.emits
 import arrow.fx.coroutines.stream.Stream.Companion.raiseError
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
@@ -112,7 +113,9 @@ object ClientCalls {
         it,
         callOptions,
         headers()
-      )
+      ).compile().lastOrError().let {
+        emits(it)
+      }
     }.flatten()
   }
 
@@ -209,7 +212,9 @@ object ClientCalls {
           it,
           callOptions,
           headers()
-        )
+        ).compile().lastOrError().let {
+          emits(it)
+        }
       }.flatten()
     }
 
@@ -241,7 +246,7 @@ object ClientCalls {
         readiness: Readiness
       ) {
         readiness.suspendUntilReady()
-        requestStream.effectMap { request ->
+        requestStream.effectMap { request: RequestT ->
           clientCall.sendMessage(request)
           readiness.suspendUntilReady()
         }
