@@ -17,7 +17,6 @@
 package io.grpc.kotlin
 
 import arrow.core.extensions.either.applicativeError.raiseError
-import arrow.core.some
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
 import arrow.fx.coroutines.stream.Stream.Companion.emits
@@ -75,7 +74,7 @@ object ServerCalls {
     }
     return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
       requests
-        .flatMap { effect { implementation(it) } }
+        .effectMap { implementation(it) }
     }
   }
 
@@ -103,7 +102,7 @@ object ServerCalls {
     require(descriptor.type == CLIENT_STREAMING) {
       "Expected a client streaming method descriptor but got $descriptor"
     }
-    return serverMethodDefinition(context, descriptor) { requests ->
+    return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
       effect {
         implementation(requests)
       }.flatMap {
@@ -138,10 +137,10 @@ object ServerCalls {
     return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
       effect {
         requests
-          .compile().lastOrError().let {
-            implementation(it).compile().lastOrError().let {
-              emits(it)
-            }
+          .flatMap { implementation(it) }
+          .compile()
+          .lastOrError().let {
+            emits(it)
           }
       }.flatten()
     }
