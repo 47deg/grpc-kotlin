@@ -16,6 +16,8 @@
 
 package io.grpc.kotlin
 
+import arrow.fx.coroutines.Disposable
+import arrow.fx.coroutines.Environment
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
 import arrow.fx.coroutines.stream.Stream.Companion.emits
@@ -35,13 +37,14 @@ import io.grpc.ServerCallHandler
 import io.grpc.ServerMethodDefinition
 import io.grpc.Status
 import io.grpc.StatusException
+import kotlinx.coroutines.CoroutineScope
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
 import io.grpc.Metadata as GrpcMetadata
 
 /**
- * Helpers for implementing a gRPC server based on a Kotlin [Arrow Fx] coroutine implementation.
+ * Helpers for implementing a gRPC server based on Arrow Fx coroutines implementation.
  */
 object ServerCalls {
   /**
@@ -192,17 +195,19 @@ object ServerCalls {
    * channel-based implementation within the specified [CoroutineScope] (and/or a subscope).
    */
   private fun <RequestT, ResponseT> serverCallHandler(
-    context: CoroutineContext, // TODO: remove context
+    context: CoroutineContext,
     implementation: (Stream<RequestT>) -> Stream<ResponseT>
   ): ServerCallHandler<RequestT, ResponseT> =
     ServerCallHandler { call, _ ->
       serverCallListener(
+        context + GrpcContextElement.current(),
         call,
         implementation
       )
     }
 
   private fun <RequestT, ResponseT> serverCallListener(
+    context: CoroutineContext,
     call: ServerCall<RequestT, ResponseT>,
     implementation: (Stream<RequestT>) -> Stream<ResponseT>
   ): ServerCall.Listener<RequestT> {
@@ -233,30 +238,36 @@ object ServerCalls {
       raiseError(it)
     }
 
-    val rpcJob: Stream<ResponseT> = effect {
-      implementation(requests)
-    }.flatten()
-      .effectMap {
-        readiness.suspendUntilReady()
-        call.sendMessage(it)
-        it
-      }.scope()
-      .handleErrorWith { cause ->
-        val closeStatus = when (cause) {
-          is CancellationException -> Status.CANCELLED.withCause(cause)
-          else -> Status.fromThrowable(cause)
+    val rpcScope = Environment(context)
+    val rpcJob: Disposable = rpcScope.unsafeRunAsyncCancellable(
+      fa = {
+        implementation(requests)
+          .compile()
+          .lastOrError()
+          .let { responseT: ResponseT ->
+            readiness.suspendUntilReady()
+            call.sendMessage(responseT)
+            responseT
+          }
+      },
+      e = { failure: Throwable ->
+        val closeStatus = when (failure) {
+          is CancellationException -> Status.CANCELLED.withCause(failure)
+          else -> Status.fromThrowable(failure)
         }
-        val trailers = Status.trailersFromThrowable(cause)
+        val trailers = Status.trailersFromThrowable(failure)
         call.close(closeStatus, trailers)
-        raiseError(cause)
+      },
+      a = { responseT: ResponseT ->
+        call.close(Status.OK, GrpcMetadata())
       }
+    )
 
     return object : ServerCall.Listener<RequestT>() {
       var isReceiving = true
 
       override fun onCancel() {
-        //rpcScope.cancel("Cancellation received from client")
-        rpcJob.interruptScope()
+        rpcJob.invoke()
       }
 
       override fun onMessage(message: RequestT) {
@@ -288,4 +299,3 @@ object ServerCalls {
     }
   }
 }
-

@@ -16,16 +16,16 @@
 
 package io.grpc.kotlin
 
+import arrow.fx.coroutines.stream.Stream
+import arrow.fx.coroutines.stream.Stream.Companion.emits
+import arrow.fx.coroutines.stream.Stream.Companion.raiseError
+import arrow.fx.coroutines.stream.compile
 import io.grpc.Status
 import io.grpc.StatusException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.single
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -54,33 +54,35 @@ internal suspend fun Job.cancelAndJoin(message: String, cause: Exception? = null
  * The purpose of this function is to enable the one element to get processed before we have
  * confirmation that the input flow is done.
  */
-internal fun <T> Flow<T>.singleOrStatusFlow(
+internal fun <T> Stream<T>.singleOrStatusStream(
   expected: String,
   descriptor: Any
-): Flow<T> = flow {
+): Stream<T> = Stream.effect<T> {
   var found = false
-  collect {
+  compile().lastOrError().let { item: T ->
     if (!found) {
       found = true
-      emit(it)
+      emits(item)
     } else {
-      throw StatusException(
+      raiseError<T>(StatusException(
         Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received two")
-      )
+      ))
     }
-  }
-  if (!found) {
-    throw StatusException(
-      Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received none")
-    )
-  }
+  }.compile().lastOrError()
+  // TODO
+//  if (!found) {
+//    raiseError<T>(StatusException(
+//      Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received none")
+//    )).compile()
+//      .drain()
+//  }
 }
 
 /**
  * Returns the one and only element of this flow, and throws a [StatusException] if there is not
  * exactly one element.
  */
-internal suspend fun <T> Flow<T>.singleOrStatus(
+internal suspend fun <T> Stream<T>.singleOrStatus(
   expected: String,
   descriptor: Any
-): T = singleOrStatusFlow(expected, descriptor).single()
+): T = singleOrStatusStream(expected, descriptor).compile().lastOrError()
