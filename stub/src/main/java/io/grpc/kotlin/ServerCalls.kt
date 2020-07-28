@@ -38,6 +38,7 @@ import io.grpc.ServerMethodDefinition
 import io.grpc.Status
 import io.grpc.StatusException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
@@ -267,7 +268,7 @@ object ServerCalls {
       var isReceiving = true
 
       override fun onCancel() {
-        rpcJob.invoke()
+        rpcScope.ctx.cancel(CancellationException("Cancellation received from client"))
       }
 
       override fun onMessage(message: RequestT) {
