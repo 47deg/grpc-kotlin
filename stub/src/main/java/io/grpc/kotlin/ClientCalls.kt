@@ -16,6 +16,8 @@
 
 package io.grpc.kotlin
 
+import arrow.fx.coroutines.Fiber
+import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
 import arrow.fx.coroutines.stream.Stream.Companion.emits
@@ -55,7 +57,7 @@ object ClientCalls {
       callOptions = callOptions,
       headers = headers,
       request = Request.Unary(request)
-    ).compile().lastOrError()
+    ).singleOrStatus("request", method)
   }
 
   /**
@@ -105,17 +107,15 @@ object ClientCalls {
     method: MethodDescriptor<RequestT, ResponseT>,
     callOptions: CallOptions = CallOptions.DEFAULT,
     headers: suspend () -> GrpcMetadata = { GrpcMetadata() }
-  ): (RequestT) -> Stream<ResponseT> = {
-    effect {
+  ): (RequestT) -> Stream<ResponseT> = { request ->
+    Stream.effect {
       serverStreamingRpc(
         channel,
         method,
-        it,
+        request,
         callOptions,
         headers()
-      ).compile().lastOrError().let {
-        emits(it)
-      }
+      )
     }.flatten()
   }
 
@@ -203,20 +203,17 @@ object ClientCalls {
     method: MethodDescriptor<RequestT, ResponseT>,
     callOptions: CallOptions = CallOptions.DEFAULT,
     headers: suspend () -> GrpcMetadata = { GrpcMetadata() }
-  ): (Stream<RequestT>) -> Stream<ResponseT> =
-    {
-      effect {
-        bidiStreamingRpc(
-          channel,
-          method,
-          it,
-          callOptions,
-          headers()
-        ).compile().lastOrError().let {
-          emits(it)
-        }
-      }.flatten()
-    }
+  ): (Stream<RequestT>) -> Stream<ResponseT> = {
+    effect {
+      bidiStreamingRpc(
+        channel,
+        method,
+        it,
+        callOptions,
+        headers()
+      )
+    }.flatten()
+  }
 
   /** The client's request(s). */
   private sealed class Request<RequestT> {
@@ -301,15 +298,34 @@ object ClientCalls {
       headers
     )
 
-    val sender = effect {
+    val sender: Fiber<Unit> = ForkConnected {
       request.sendTo(clientCall, readiness)
       clientCall.halfClose()
-    }.handleErrorWith { ex: Throwable ->
+    }/*.handleErrorWith { ex: Throwable ->
       clientCall.cancel("Collection of requests completed exceptionally", ex)
       raiseError(ex)
-    }.compile().drain()
+    }.compile().drain()*/
 
     // bufferBy ?
+    Stream.bracket({
+      ForkConnected {
+        request.sendTo(clientCall, readiness)
+        clientCall.halfClose()
+      }
+    }, { sender ->
+      sender.cancel()
+      clientCall.cancel("Collection of responses completed exceptionally", error)
+    }).flatMap {
+      Stream.effect {
+        clientCall.request(1)
+        responses.dequeue().compile().lastOrError().let { response: ResponseT ->
+          clientCall.request(1)
+          Stream.emits(response).compile().lastOrError()
+        }
+      }
+    }
+
+
     effect {
       clientCall.request(1)
       responses.dequeue().compile().lastOrError().let { response: ResponseT ->
@@ -319,6 +335,7 @@ object ClientCalls {
     }.handleErrorWith { error: Throwable ->
       // TODO: sender."cancelAndJoin"
       // interrupt?
+
       clientCall.cancel("Collection of responses completed exceptionally", error)
       raiseError(Exception("Collection of responses completed exceptionally"))
     }.compile().lastOrError()

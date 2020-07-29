@@ -16,11 +16,13 @@
 
 package io.grpc.kotlin
 
+import arrow.fx.coroutines.Atomic
 import arrow.fx.coroutines.Disposable
 import arrow.fx.coroutines.Environment
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
 import arrow.fx.coroutines.stream.Stream.Companion.emits
+import arrow.fx.coroutines.stream.Stream.Companion.force
 import arrow.fx.coroutines.stream.Stream.Companion.raiseError
 import arrow.fx.coroutines.stream.Stream.Companion.unit
 import arrow.fx.coroutines.stream.compile
@@ -75,10 +77,7 @@ object ServerCalls {
     require(descriptor.type == UNARY) {
       "Expected a unary method descriptor but got $descriptor"
     }
-    return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
-      requests
-        .effectMap { implementation(it) }
-    }
+    return serverMethodDefinition(context, descriptor) { it.effectMap(implementation) }
   }
 
   /**
@@ -106,11 +105,7 @@ object ServerCalls {
       "Expected a client streaming method descriptor but got $descriptor"
     }
     return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
-      effect {
-        implementation(requests)
-      }.flatMap {
-        emits(it)
-      }
+      effect { implementation(requests) }
     }
   }
 
@@ -216,7 +211,7 @@ object ServerCalls {
     call.sendHeaders(GrpcMetadata())
 
     val readiness = Readiness { call.isReady }
-    val requestsChannel: Queue<RequestT> = Environment(context).unsafeRunSync { Queue.bounded<RequestT>(1) }
+    val requestsChannel: Queue<RequestT> = Environment(context).unsafeRunSync { Queue.bounded<RequestT>(1)
     // val requestsChannel = ConcurrentVar.unsafeEmpty<RequestT>()
 
     val requestsStarted = AtomicBoolean(false) // enforces read-once
@@ -267,7 +262,8 @@ object ServerCalls {
       var isReceiving = true
 
       override fun onCancel() {
-        rpcScope.ctx.cancel(CancellationException("Cancellation received from client"))
+        rpcJob.invoke()
+//        rpcScope.ctx.cancel(CancellationException("Cancellation received from client"))
       }
 
       override fun onMessage(message: RequestT) {

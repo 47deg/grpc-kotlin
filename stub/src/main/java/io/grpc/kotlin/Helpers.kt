@@ -16,10 +16,16 @@
 
 package io.grpc.kotlin
 
+import arrow.fx.coroutines.stream.Pull
+import arrow.fx.coroutines.stream.PullUncons1
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.emits
 import arrow.fx.coroutines.stream.Stream.Companion.raiseError
 import arrow.fx.coroutines.stream.compile
+import arrow.fx.coroutines.stream.cons
+import arrow.fx.coroutines.stream.flatMap
+import arrow.fx.coroutines.stream.stream
+import arrow.fx.coroutines.stream.unconsOrNull
 import io.grpc.Status
 import io.grpc.StatusException
 import kotlinx.coroutines.Deferred
@@ -57,25 +63,19 @@ internal suspend fun Job.cancelAndJoin(message: String, cause: Exception? = null
 internal fun <T> Stream<T>.singleOrStatusStream(
   expected: String,
   descriptor: Any
-): Stream<T> = Stream.effect<T> {
-  var found = false
-  compile().lastOrError().let { item: T ->
-    if (!found) {
-      found = true
-      emits(item)
-    } else {
-      raiseError<T>(StatusException(
-        Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received two")
-      ))
+): Stream<T> {
+  fun <O> Pull<O, Unit>.firstOrStatus(): Pull<O, Unit> =
+    unconsOrNull().flatMap { uncons ->
+      when {
+        uncons == null -> Pull.done()
+        uncons.head.size() == 1 -> Pull.output1(uncons.head[0])
+        else -> Pull.raiseError(StatusException(
+          Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received two")
+        ))
+      }
     }
-  }.compile().lastOrError()
-  // TODO
-//  if (!found) {
-//    raiseError<T>(StatusException(
-//      Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received none")
-//    )).compile()
-//      .drain()
-//  }
+
+  return asPull().firstOrStatus().stream()
 }
 
 /**
@@ -85,4 +85,5 @@ internal fun <T> Stream<T>.singleOrStatusStream(
 internal suspend fun <T> Stream<T>.singleOrStatus(
   expected: String,
   descriptor: Any
-): T = singleOrStatusStream(expected, descriptor).compile().lastOrError()
+): T =
+  singleOrStatusStream(expected, descriptor).take(1).compile().lastOrNull()!!
