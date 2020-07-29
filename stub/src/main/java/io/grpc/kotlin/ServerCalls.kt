@@ -216,7 +216,8 @@ object ServerCalls {
     call.sendHeaders(GrpcMetadata())
 
     val readiness = Readiness { call.isReady }
-    val requestsChannel: Queue<RequestT> = Queue.bounded(1)
+    val requestsChannel: Queue<RequestT> = Environment(context).unsafeRunSync { Queue.bounded<RequestT>(1) }
+    // val requestsChannel = ConcurrentVar.unsafeEmpty<RequestT>()
 
     val requestsStarted = AtomicBoolean(false) // enforces read-once
 
@@ -232,9 +233,7 @@ object ServerCalls {
         it
       }
     }.handleErrorWith {
-//        requestsChannel.cancel(
-//          CancellationException("Exception thrown while collecting requests", e)
-//        )
+      // no need to cancel requestsChannel, garbage collector will take care of it
       call.request(1) // make sure we don't cause backpressure
       raiseError(it)
     }
@@ -291,7 +290,6 @@ object ServerCalls {
       }
 
       override fun onHalfClose() {
-        requestsChannel.dequeue()
       }
 
       override fun onReady() {

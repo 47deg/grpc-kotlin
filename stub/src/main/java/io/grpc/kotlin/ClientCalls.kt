@@ -291,7 +291,7 @@ object ClientCalls {
         }
 
         override fun onClose(status: Status, trailersMetadata: GrpcMetadata) {
-          responses.dequeue()
+          // responses.dequeue()
         }
 
         override fun onReady() {

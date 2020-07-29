@@ -16,6 +16,13 @@
 
 package io.grpc.kotlin
 
+import arrow.fx.coroutines.Environment
+import arrow.fx.coroutines.stream.Stream
+import arrow.fx.coroutines.stream.Stream.Companion.effect
+import arrow.fx.coroutines.stream.Stream.Companion.just
+import arrow.fx.coroutines.stream.compile
+import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.handleErrorWith
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.extensions.proto.ProtoTruth.assertThat
 import com.google.common.util.concurrent.MoreExecutors.directExecutor
@@ -30,6 +37,7 @@ import io.grpc.examples.helloworld.MultiHelloRequest
 import io.grpc.stub.StreamObserver
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -266,13 +274,13 @@ class ClientCallsTest: AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val rpc = ClientCalls.serverStreamingRpc(
+    val rpc: Stream<HelloReply> = ClientCalls.serverStreamingRpc(
       channel = channel,
       method = serverStreamingSayHelloMethod,
       request = multiHelloRequest("Cindy", "Jeff", "Aki")
     )
 
-    assertThat(rpc.toList()).containsExactly(
+    assertThat(rpc.compile().toList()).containsExactly(
       helloReply("Hello, Cindy"), helloReply("Hello, Jeff"), helloReply("Hello, Aki")
     ).inOrder()
   }
@@ -303,7 +311,7 @@ class ClientCallsTest: AbstractCallsTest() {
       request = multiHelloRequest("Tim", "Jim", "Pym")
     )
     assertThrows<CancellationException> {
-      rpc.collect {
+      rpc.compile().lastOrError().let {
         serverReceived.join()
         throw CancellationException("no longer needed")
       }
@@ -338,7 +346,7 @@ class ClientCallsTest: AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = flowOf(
+    val requests = Stream.emits(
       helloRequest("Tim"),
       helloRequest("Jim")
     )
@@ -351,7 +359,7 @@ class ClientCallsTest: AbstractCallsTest() {
     ).isEqualTo(helloReply("Hello, Tim, Jim"))
   }
 
-  @FlowPreview
+
   @Test
   fun clientStreamingRpcReturnsEarly() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
@@ -386,27 +394,30 @@ class ClientCallsTest: AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Channel<HelloRequest>()
-    val response = async {
+    // val requests = Channel<HelloRequest>()
+    val requests = Queue.bounded<HelloRequest>(1)
+    // TODO async
+    val response: HelloReply = Environment(coroutineContext).unsafeRunSync {
       ClientCalls.clientStreamingRpc(
         channel = channel,
         method = clientStreamingSayHelloMethod,
-        requests = requests.consumeAsFlow()
+        requests = requests.dequeue()
       )
     }
-    requests.send(helloRequest("Tim"))
-    requests.send(helloRequest("Jim"))
-    assertThat(response.await()).isEqualTo(helloReply("Hello, Tim, Jim"))
-    try {
-      requests.send(helloRequest("John"))
-    } catch (allowed: CancellationException) {
+    requests.offer1(helloRequest("Tim"))
+    requests.offer1(helloRequest("Jim"))
+    assertThat(response).isEqualTo(helloReply("Hello, Tim, Jim"))
+    effect {
+      requests.offer1(helloRequest("John"))
+    }.handleErrorWith { allowed: Throwable ->
       // Either this should successfully send, or the channel should be cancelled; either is
       // acceptable.  The one unacceptable outcome would be for these operations to suspend
       // indefinitely, waiting for them to be sent.
+      just(true)
     }
   }
 
-  @FlowPreview
+
   @Test
   fun clientStreamingRpcCancelled() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
@@ -434,8 +445,18 @@ class ClientCallsTest: AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
+//    val requests = Queue.bounded<HelloRequest>(1)
+//    // TODO async
+//    val response: HelloReply = Environment(coroutineContext).unsafeRunSync {
+//      ClientCalls.clientStreamingRpc(
+//        channel = channel,
+//        method = clientStreamingSayHelloMethod,
+//        requests = requests.dequeue()
+//      )
+//    }
+
     val requests = Channel<HelloRequest>()
-    val response = async {
+    val response: Deferred<HelloReply> = async {
       ClientCalls.clientStreamingRpc(
         channel = channel,
         method = clientStreamingSayHelloMethod,
@@ -450,7 +471,7 @@ class ClientCallsTest: AbstractCallsTest() {
     }
   }
 
-  @FlowPreview
+
   @Test
   fun simpleBidiStreamingRpc() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
@@ -487,7 +508,7 @@ class ClientCallsTest: AbstractCallsTest() {
     assertThat(rpc.iterator().hasNext()).isFalse()
   }
 
-  @FlowPreview
+
   @Test
   fun bidiStreamingRpcReturnsEarly() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
