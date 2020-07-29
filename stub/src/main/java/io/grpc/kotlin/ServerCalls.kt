@@ -16,13 +16,12 @@
 
 package io.grpc.kotlin
 
-import arrow.fx.coroutines.Atomic
-import arrow.fx.coroutines.Disposable
 import arrow.fx.coroutines.Environment
+import arrow.fx.coroutines.Fiber
+import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
 import arrow.fx.coroutines.stream.Stream.Companion.emits
-import arrow.fx.coroutines.stream.Stream.Companion.force
 import arrow.fx.coroutines.stream.Stream.Companion.raiseError
 import arrow.fx.coroutines.stream.Stream.Companion.unit
 import arrow.fx.coroutines.stream.compile
@@ -39,8 +38,6 @@ import io.grpc.ServerCallHandler
 import io.grpc.ServerMethodDefinition
 import io.grpc.Status
 import io.grpc.StatusException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.cancel
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
@@ -211,7 +208,7 @@ object ServerCalls {
     call.sendHeaders(GrpcMetadata())
 
     val readiness = Readiness { call.isReady }
-    val requestsChannel: Queue<RequestT> = Environment(context).unsafeRunSync { Queue.bounded<RequestT>(1)
+    val requestsChannel: Queue<RequestT> = Environment(context).unsafeRunSync { Queue.bounded<RequestT>(1) }
     // val requestsChannel = ConcurrentVar.unsafeEmpty<RequestT>()
 
     val requestsStarted = AtomicBoolean(false) // enforces read-once
@@ -223,7 +220,6 @@ object ServerCalls {
 
       call.request(1)
       requestsChannel.dequeue().compile().lastOrError().let {
-        emits(it)
         call.request(1)
         it
       }
@@ -233,52 +229,60 @@ object ServerCalls {
       raiseError(it)
     }
 
-    val rpcScope = Environment(context)
-    val rpcJob: Disposable = rpcScope.unsafeRunAsyncCancellable(
-      fa = {
+    val rpcJob = Stream.bracket({
+      ForkConnected {
         implementation(requests)
           .compile()
-          .lastOrError()
-          .let { responseT: ResponseT ->
+          .lastOrNull()?.let {
             readiness.suspendUntilReady()
-            call.sendMessage(responseT)
-            responseT
+            call.sendMessage(it)
           }
-      },
-      e = { failure: Throwable ->
-        val closeStatus = when (failure) {
-          is CancellationException -> Status.CANCELLED.withCause(failure)
-          else -> Status.fromThrowable(failure)
-        }
-        val trailers = Status.trailersFromThrowable(failure)
-        call.close(closeStatus, trailers)
-      },
-      a = { responseT: ResponseT ->
-        call.close(Status.OK, GrpcMetadata())
+//          .foldChunks(Unit) { _, chunkResponseT: Chunk<ResponseT> ->
+//            readiness.suspendUntilReady()
+//            call.sendMessage(chunkResponseT.firstOrNull())
+//          }
       }
-    )
+    }, { fiber: Fiber<Unit?> ->
+      fiber.cancel()
+      val failure = Throwable("FIXME")
+      //val failure = cause ?: rpcJob.doneValue
+      val closeStatus = when (failure) {
+        null -> Status.OK
+        // TODO how is it thrown the CancellationException?
+        is CancellationException -> Status.CANCELLED.withCause(failure)
+        else -> Status.fromThrowable(failure)
+      }
+      val trailers = failure?.let { Status.trailersFromThrowable(it) } ?: GrpcMetadata()
+      call.close(closeStatus, trailers)
+    })
 
     return object : ServerCall.Listener<RequestT>() {
       var isReceiving = true
 
       override fun onCancel() {
-        rpcJob.invoke()
-//        rpcScope.ctx.cancel(CancellationException("Cancellation received from client"))
+        rpcJob.handleErrorWith {
+          raiseError(CancellationException("Cancellation received from client"))
+        }
       }
 
       override fun onMessage(message: RequestT) {
-        effect {
-          if (isReceiving) {
+        if (isReceiving) {
+          // TODO: Change effect when `tryOffer1` is added
+          effect {
             if (!requestsChannel.offer1(message)) {
-              raiseError<Exception>(Exception("onMessage should never be called when requestsChannel is unready"))
+              raiseError<StatusException>(Status.INTERNAL
+                .withDescription(
+                  "onMessage should never be called when requestsChannel is unready"
+                )
+                .asException())
                 .compile()
                 .drain()
             }
+          }.handleErrorWith {
+            // we don't want any more client input; swallow it
+            isReceiving = false
+            unit
           }
-        }.handleErrorWith {
-          // we don't want any more client input; swallow it
-          isReceiving = false
-          unit
         }
         if (!isReceiving) {
           call.request(1) // do not exert backpressure

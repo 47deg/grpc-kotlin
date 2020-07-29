@@ -20,7 +20,6 @@ import arrow.fx.coroutines.Fiber
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
-import arrow.fx.coroutines.stream.Stream.Companion.emits
 import arrow.fx.coroutines.stream.Stream.Companion.raiseError
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
@@ -108,7 +107,7 @@ object ClientCalls {
     callOptions: CallOptions = CallOptions.DEFAULT,
     headers: suspend () -> GrpcMetadata = { GrpcMetadata() }
   ): (RequestT) -> Stream<ResponseT> = { request ->
-    Stream.effect {
+    effect {
       serverStreamingRpc(
         channel,
         method,
@@ -278,17 +277,16 @@ object ClientCalls {
     clientCall.start(
       object : ClientCall.Listener<ResponseT>() {
         override fun onMessage(message: ResponseT) {
-          effect {
-            if (!responses.offer1(message)) {
-              raiseError<AssertionError>(AssertionError("onMessage should never be called until responses is ready"))
-                .compile()
-                .drain()
-            }
-          }.attempt()
+          // TODO: Remove comments when `tryOffer1` is added
+//          if (!responses.tryOffer1(message)) {
+//            raiseError<AssertionError>(AssertionError("onMessage should never be called until responses is ready"))
+//              .compile()
+//              .drain()
+//          }
         }
 
         override fun onClose(status: Status, trailersMetadata: GrpcMetadata) {
-          // responses.dequeue()
+          // responses queue doesn't need to be close
         }
 
         override fun onReady() {
@@ -298,46 +296,24 @@ object ClientCalls {
       headers
     )
 
-    val sender: Fiber<Unit> = ForkConnected {
-      request.sendTo(clientCall, readiness)
-      clientCall.halfClose()
-    }/*.handleErrorWith { ex: Throwable ->
-      clientCall.cancel("Collection of requests completed exceptionally", ex)
-      raiseError(ex)
-    }.compile().drain()*/
-
-    // bufferBy ?
     Stream.bracket({
       ForkConnected {
         request.sendTo(clientCall, readiness)
         clientCall.halfClose()
       }
-    }, { sender ->
+    }, { sender: Fiber<Unit> ->
       sender.cancel()
-      clientCall.cancel("Collection of responses completed exceptionally", error)
     }).flatMap {
-      Stream.effect {
+      effect {
         clientCall.request(1)
         responses.dequeue().compile().lastOrError().let { response: ResponseT ->
           clientCall.request(1)
-          Stream.emits(response).compile().lastOrError()
+          response
         }
       }
-    }
-
-
-    effect {
-      clientCall.request(1)
-      responses.dequeue().compile().lastOrError().let { response: ResponseT ->
-        clientCall.request(1)
-        Stream.emits(response).compile().lastOrError()
-      }
-    }.handleErrorWith { error: Throwable ->
-      // TODO: sender."cancelAndJoin"
-      // interrupt?
-
+    }.handleErrorWith { error ->
       clientCall.cancel("Collection of responses completed exceptionally", error)
-      raiseError(Exception("Collection of responses completed exceptionally"))
-    }.compile().lastOrError()
-  }.scope()
+      raiseError(error)
+    }
+  }.flatten()
 }
