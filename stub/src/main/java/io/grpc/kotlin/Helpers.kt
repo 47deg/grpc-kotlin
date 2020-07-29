@@ -17,42 +17,33 @@
 package io.grpc.kotlin
 
 import arrow.fx.coroutines.stream.Pull
-import arrow.fx.coroutines.stream.PullUncons1
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.Stream.Companion.emits
-import arrow.fx.coroutines.stream.Stream.Companion.raiseError
 import arrow.fx.coroutines.stream.compile
-import arrow.fx.coroutines.stream.cons
 import arrow.fx.coroutines.stream.flatMap
 import arrow.fx.coroutines.stream.stream
 import arrow.fx.coroutines.stream.unconsOrNull
 import io.grpc.Status
 import io.grpc.StatusException
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.runBlocking
 
 /**
  * Extracts the value of a [Deferred] known to be completed, or throws its exception if it was
  * not completed successfully.  (Non-experimental variant of `getDone`.)
  */
-internal val <T> Deferred<T>.doneValue: T
-  get() {
-    check(isCompleted) { "doneValue should only be called on completed Deferred values" }
-    return runBlocking(Dispatchers.Unconfined) {
-      await()
-    }
-  }
+//internal val <T> Deferred<T>.doneValue: T
+//  get() {
+//    check(isCompleted) { "doneValue should only be called on completed Deferred values" }
+//    return runBlocking(Dispatchers.Unconfined) {
+//      await()
+//    }
+//  }
 
 /**
  * Cancels a [Job] with a cause and suspends until the job completes/is finished cancelling.
  */
-internal suspend fun Job.cancelAndJoin(message: String, cause: Exception? = null) {
-  cancel(message, cause)
-  join()
-}
+//internal suspend fun Job.cancelAndJoin(message: String, cause: Exception? = null) {
+//  cancel(message, cause)
+//  join()
+//}
 
 /**
  * Returns this flow, save that if there is not exactly one element, it throws a [StatusException].

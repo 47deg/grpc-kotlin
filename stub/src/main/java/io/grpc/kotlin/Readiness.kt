@@ -21,6 +21,7 @@ import kotlinx.coroutines.channels.Channel
 /**
  * A simple helper allowing a notification of "ready" to be broadcast, and waited for.
  */
+// TODO: Replace Channel for Queue.bounded(1) - TODO: check behavior of CONFLATED channel
 internal class Readiness(
   private val isReallyReady: () -> Boolean
 ) {
