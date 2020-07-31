@@ -28,7 +28,7 @@ import io.grpc.netty.NegotiationType
 import io.grpc.netty.NettyChannelBuilder
 import io.grpc.okhttp.OkHttpChannelBuilder
 import io.grpc.okhttp.internal.Platform
-import io.grpc.testing.integration.TestServiceGrpcKt.TestServiceCoroutineStub
+import io.grpc.testing.integration.TestServiceGrpcKt.TestServiceArrowCoroutineStub
 import io.netty.handler.ssl.SslContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -169,20 +169,20 @@ class TestServiceClient {
       TestCases.CLIENT_COMPRESSED_UNARY -> tester.clientCompressedUnary(true)
       TestCases.CLIENT_COMPRESSED_UNARY_NOPROBE -> tester.clientCompressedUnary(false)
       TestCases.SERVER_COMPRESSED_UNARY -> tester.serverCompressedUnary()
-      TestCases.CLIENT_STREAMING -> tester.clientStreaming()
-      TestCases.CLIENT_COMPRESSED_STREAMING -> tester.clientCompressedStreaming(true)
-      TestCases.CLIENT_COMPRESSED_STREAMING_NOPROBE -> tester.clientCompressedStreaming(false)
-      TestCases.SERVER_STREAMING -> tester.serverStreaming()
-      TestCases.SERVER_COMPRESSED_STREAMING -> tester.serverCompressedStreaming()
-      TestCases.PING_PONG -> tester.pingPong()
-      TestCases.EMPTY_STREAM -> tester.emptyStream()
+//      TestCases.CLIENT_STREAMING -> tester.clientStreaming()
+//      TestCases.CLIENT_COMPRESSED_STREAMING -> tester.clientCompressedStreaming(true)
+//      TestCases.CLIENT_COMPRESSED_STREAMING_NOPROBE -> tester.clientCompressedStreaming(false)
+//      TestCases.SERVER_STREAMING -> tester.serverStreaming()
+//      TestCases.SERVER_COMPRESSED_STREAMING -> tester.serverCompressedStreaming()
+//      TestCases.PING_PONG -> tester.pingPong()
+//      TestCases.EMPTY_STREAM -> tester.emptyStream()
       TestCases.COMPUTE_ENGINE_CREDS -> tester.computeEngineCreds(defaultServiceAccount, oauthScope)
       TestCases.COMPUTE_ENGINE_CHANNEL_CREDENTIALS -> {
         val channel = ComputeEngineChannelBuilder.forAddress(serverHost, serverPort).build()
         try {
           tester.computeEngineChannelCredentials(
             defaultServiceAccount,
-            TestServiceCoroutineStub(channel)
+            TestServiceArrowCoroutineStub(channel)
           )
         } finally {
           channel.shutdownNow()
@@ -211,21 +211,21 @@ class TestServiceClient {
       TestCases.GOOGLE_DEFAULT_CREDENTIALS -> {
         val channel = GoogleDefaultChannelBuilder.forAddress(serverHost, serverPort).build()
         try {
-          val googleDefaultStub = TestServiceCoroutineStub(channel)
+          val googleDefaultStub = TestServiceArrowCoroutineStub(channel)
           tester.googleDefaultCredentials(defaultServiceAccount, googleDefaultStub)
         } finally {
           channel.shutdownNow()
         }
       }
-      TestCases.CUSTOM_METADATA -> tester.customMetadata()
-      TestCases.STATUS_CODE_AND_MESSAGE -> tester.statusCodeAndMessage()
-      TestCases.SPECIAL_STATUS_MESSAGE -> tester.specialStatusMessage()
-      TestCases.UNIMPLEMENTED_METHOD -> tester.unimplementedMethod()
-      TestCases.UNIMPLEMENTED_SERVICE -> tester.unimplementedService()
-      TestCases.CANCEL_AFTER_BEGIN -> tester.cancelAfterBegin()
-      TestCases.CANCEL_AFTER_FIRST_RESPONSE -> tester.cancelAfterFirstResponse()
-      TestCases.TIMEOUT_ON_SLEEPING_SERVER -> tester.timeoutOnSleepingServer()
-      TestCases.VERY_LARGE_REQUEST -> tester.veryLargeRequest()
+//      TestCases.CUSTOM_METADATA -> tester.customMetadata()
+//      TestCases.STATUS_CODE_AND_MESSAGE -> tester.statusCodeAndMessage()
+//      TestCases.SPECIAL_STATUS_MESSAGE -> tester.specialStatusMessage()
+//      TestCases.UNIMPLEMENTED_METHOD -> tester.unimplementedMethod()
+//      TestCases.UNIMPLEMENTED_SERVICE -> tester.unimplementedService()
+//      TestCases.CANCEL_AFTER_BEGIN -> tester.cancelAfterBegin()
+//      TestCases.CANCEL_AFTER_FIRST_RESPONSE -> tester.cancelAfterFirstResponse()
+//      TestCases.TIMEOUT_ON_SLEEPING_SERVER -> tester.timeoutOnSleepingServer()
+//      TestCases.VERY_LARGE_REQUEST -> tester.veryLargeRequest()
       TestCases.PICK_FIRST_UNARY -> tester.pickFirstUnary()
       else -> throw IllegalArgumentException("Unknown test case: $testCase")
     }

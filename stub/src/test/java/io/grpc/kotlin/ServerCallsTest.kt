@@ -16,12 +16,22 @@
 
 package io.grpc.kotlin
 
+import arrow.core.None
+import arrow.fx.coroutines.ForkConnected
+import arrow.fx.coroutines.IOPool
+import arrow.fx.coroutines.Promise
+import arrow.fx.coroutines.evalOn
+import arrow.fx.coroutines.milliseconds
+import arrow.fx.coroutines.stream.Stream
+import arrow.fx.coroutines.stream.compile
+import arrow.fx.coroutines.stream.concurrent.Queue
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.extensions.proto.ProtoTruth.assertThat
 import io.grpc.CallOptions
 import io.grpc.ClientCall
 import io.grpc.Context
 import io.grpc.Contexts
+import io.grpc.ManagedChannel
 import io.grpc.Metadata
 import io.grpc.ServerCall
 import io.grpc.ServerCallHandler
@@ -32,43 +42,16 @@ import io.grpc.StatusRuntimeException
 import io.grpc.examples.helloworld.GreeterGrpc
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.async
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.sendBlocking
-import kotlinx.coroutines.channels.toList
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.asFlow
-import kotlinx.coroutines.flow.buffer
-import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.consumeAsFlow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onCompletion
-import kotlinx.coroutines.flow.produceIn
-import kotlinx.coroutines.flow.take
-import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
-import java.util.concurrent.Executors
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
-@ExperimentalCoroutinesApi
 @RunWith(JUnit4::class)
 class ServerCallsTest : AbstractCallsTest() {
+  // TODO: add replacement of CoroutineName?
   val context = CoroutineName("server context")
 
   @Test
@@ -86,12 +69,12 @@ class ServerCallsTest : AbstractCallsTest() {
 
   @Test
   fun unaryMethodCancellationPropagatedToServer() = runBlocking {
-    val requestReceived = Job()
-    val cancelled = Job()
+    val requestReceived = ForkConnected { }
+    val cancelled = ForkConnected { }
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
-        requestReceived.complete()
-        suspendUntilCancelled { cancelled.complete() }
+        requestReceived.cancel()
+        suspendUntilCancelled { cancelled.cancel() }
       }
     )
 
@@ -104,34 +87,34 @@ class ServerCallsTest : AbstractCallsTest() {
 
   @Test
   fun unaryRequestHandledWithoutWaitingForHalfClose() = runBlocking {
-    val processingStarted = Job()
+    val processingStarted = ForkConnected { }
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
-        processingStarted.complete()
+        processingStarted.cancel()
         helloReply("Hello!")
       }
     )
 
     val clientCall = channel.newCall(sayHelloMethod, CallOptions.DEFAULT)
-    val response = CompletableDeferred<HelloReply>()
-    val closeStatus = CompletableDeferred<Status>()
-    clientCall.start(object: ClientCall.Listener<HelloReply>() {
+    val response = Promise<HelloReply>()
+    val closeStatus = Promise<Status>()
+    clientCall.start(object : ClientCall.Listener<HelloReply>() {
       override fun onMessage(message: HelloReply) {
-        response.complete(message)
+        Stream.effect { response.complete(message) }
       }
 
       override fun onClose(status: Status, trailers: Metadata) {
-        closeStatus.complete(status)
+        Stream.effect { closeStatus.complete(status) }
       }
     }, Metadata())
     clientCall.sendMessage(helloRequest(""))
     clientCall.request(1)
     processingStarted.join()
-    assertThat(response.await()).isEqualTo(helloReply("Hello!"))
-    delay(200)
-    assertThat(closeStatus.isCompleted).isFalse()
+    assertThat(response.get()).isEqualTo(helloReply("Hello!"))
+    Stream.unit.delayBy(200.milliseconds) //delay(200)?
+    assertThat(closeStatus.tryGet()).isNull()
     clientCall.halfClose()
-    assertThat(closeStatus.await().code).isEqualTo(Status.Code.OK)
+    assertThat(closeStatus.get().code).isEqualTo(Status.Code.OK)
   }
 
   @Test
@@ -142,12 +125,12 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     )
     val call = channel.newCall(sayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = CompletableDeferred<Status>()
+    val closeStatus = Promise<Status>()
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          closeStatus.complete(status)
+          Stream.effect { closeStatus.complete(status) }
         }
       },
       Metadata()
@@ -156,7 +139,7 @@ class ServerCallsTest : AbstractCallsTest() {
     call.sendMessage(helloRequest("Amethyst"))
     call.sendMessage(helloRequest("Pearl"))
     call.halfClose()
-    val status = closeStatus.await()
+    val status = closeStatus.get()
     assertThat(status.code).isEqualTo(Status.Code.INTERNAL)
     assertThat(status.description).contains("received two")
   }
@@ -172,12 +155,12 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     )
     val call = channel.newCall(sayHelloMethod, CallOptions.DEFAULT)
-    val closeTrailers = CompletableDeferred<Metadata>()
+    val closeTrailers = Promise<Metadata>()
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          closeTrailers.complete(trailers)
+          Stream.effect { closeTrailers.complete(trailers) }
         }
       },
       Metadata()
@@ -185,7 +168,8 @@ class ServerCallsTest : AbstractCallsTest() {
     call.request(1)
     call.sendMessage(helloRequest("Garnet"))
     call.halfClose()
-    assertThat(closeTrailers.await()[key]).isEqualTo("value")
+    val metadata = closeTrailers.get()
+    assertThat(metadata[key]).isEqualTo("value")
   }
 
   @Test
@@ -196,19 +180,19 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     )
     val call = channel.newCall(sayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = CompletableDeferred<Status>()
+    val closeStatus = Promise<Status>()
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          closeStatus.complete(status)
+          Stream.effect { closeStatus.complete(status) }
         }
       },
       Metadata()
     )
     call.request(1)
     call.halfClose()
-    val status = closeStatus.await()
+    val status = closeStatus.get()
     assertThat(status.code).isEqualTo(Status.Code.INTERNAL)
     assertThat(status.description).contains("received none")
   }
@@ -234,7 +218,9 @@ class ServerCallsTest : AbstractCallsTest() {
   fun unaryMethodThrowsException() = runBlocking {
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
-        throw MyException()
+        Stream.raiseError<HelloReply>(MyException())
+          .compile()
+          .lastOrError()
       }
     )
 
@@ -249,16 +235,16 @@ class ServerCallsTest : AbstractCallsTest() {
   fun simpleServerStreaming() = runBlocking {
     val channel = makeChannel(
       ServerCalls.serverStreamingServerMethodDefinition(context, serverStreamingSayHelloMethod) {
-        it.nameList.asFlow().map { helloReply("Hello, $it") }
+        Stream.emits(it.nameList).map { helloReply("Hello, $it") }
       }
     )
 
-    val responses = ClientCalls.serverStreamingRpc(
+    val responses: Stream<HelloReply> = ClientCalls.serverStreamingRpc(
       channel,
       serverStreamingSayHelloMethod,
       multiHelloRequest("Garnet", "Amethyst", "Pearl")
     )
-    assertThat(responses.toList())
+    assertThat(responses.compile().toList())
       .containsExactly(
         helloReply("Hello, Garnet"),
         helloReply("Hello, Amethyst"),
@@ -268,26 +254,26 @@ class ServerCallsTest : AbstractCallsTest() {
 
   @Test
   fun serverStreamingCancellationPropagatedToServer() = runBlocking {
-    val requestReceived = Job()
-    val cancelled = Job()
+    val requestReceived = ForkConnected { }
+    val cancelled = ForkConnected { }
     val channel = makeChannel(
       ServerCalls.serverStreamingServerMethodDefinition(
         context,
         serverStreamingSayHelloMethod
       ) {
-        flow {
-          requestReceived.complete()
-          suspendUntilCancelled { cancelled.complete() }
+        Stream.effect {
+          requestReceived.join()
+          suspendUntilCancelled { cancelled.cancel() }
         }
       }
     )
 
     val call = channel.newCall(serverStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = CompletableDeferred<Status>()
+    val closeStatus = Promise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          closeStatus.complete(status)
+          Stream.effect { closeStatus.complete(status) }
         }
       },
       Metadata()
@@ -297,7 +283,7 @@ class ServerCallsTest : AbstractCallsTest() {
     requestReceived.join()
     call.cancel("Test cancellation", null)
     cancelled.join()
-    assertThat(closeStatus.await().code).isEqualTo(Status.Code.CANCELLED)
+    assertThat(closeStatus.get().code).isEqualTo(Status.Code.CANCELLED)
   }
 
   @Test
@@ -306,15 +292,15 @@ class ServerCallsTest : AbstractCallsTest() {
       ServerCalls.serverStreamingServerMethodDefinition(
         context,
         serverStreamingSayHelloMethod
-      ) { flow { throw StatusException(Status.OUT_OF_RANGE) } }
+      ) { Stream.raiseError(StatusException(Status.OUT_OF_RANGE)) }
     )
 
     val call = channel.newCall(serverStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = CompletableDeferred<Status>()
+    val closeStatus = Promise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          closeStatus.complete(status)
+          Stream.effect { closeStatus.complete(status) }
         }
       },
       Metadata()
@@ -323,43 +309,41 @@ class ServerCallsTest : AbstractCallsTest() {
     // message before executing the implementation, so we have to halfClose
     call.sendMessage(multiHelloRequest("Steven"))
     call.halfClose()
-    assertThat(closeStatus.await().code).isEqualTo(Status.Code.OUT_OF_RANGE)
+    assertThat(closeStatus.get().code).isEqualTo(Status.Code.OUT_OF_RANGE)
   }
 
   @Test
   fun serverStreamingHandledWithoutWaitingForHalfClose() = runBlocking {
-    val processingStarted = Job()
-    val channel = makeChannel(
-      ServerCalls.serverStreamingServerMethodDefinition(context, serverStreamingSayHelloMethod) {
-        request -> flow {
-          processingStarted.complete()
-          for (name in request.nameList) {
-            emit(helloReply("Hello, $name"))
-          }
+    val processingStarted = ForkConnected { }
+    val channel: ManagedChannel = makeChannel(
+      ServerCalls.serverStreamingServerMethodDefinition(context, serverStreamingSayHelloMethod) { request ->
+        Stream.effect<HelloReply> {
+          processingStarted.cancel()
+          helloReply("Hello, ${request.nameList}")
         }
       }
     )
 
     val clientCall = channel.newCall(serverStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val responseChannel = Channel<HelloReply>()
-    clientCall.start(object: ClientCall.Listener<HelloReply>() {
+    val responseChannel = Queue.unbounded<HelloReply>()
+    clientCall.start(object : ClientCall.Listener<HelloReply>() {
       override fun onMessage(message: HelloReply) {
-        responseChannel.sendBlocking(message)
+        Stream.effect { responseChannel.enqueue1(message) }
       }
 
       override fun onClose(status: Status, trailers: Metadata) {
-        responseChannel.close()
+        // no need to close it: responseChannel.close()
       }
     }, Metadata())
     clientCall.sendMessage(multiHelloRequest("Ruby", "Sapphire"))
     clientCall.request(2)
     processingStarted.join()
-    assertThat(responseChannel.receive()).isEqualTo(helloReply("Hello, Ruby"))
-    assertThat(responseChannel.receive()).isEqualTo(helloReply("Hello, Sapphire"))
-    delay(200)
-    assertThat(responseChannel.isClosedForReceive).isFalse()
+    assertThat(responseChannel.dequeue1()).isEqualTo(helloReply("Hello, Ruby"))
+    assertThat(responseChannel.dequeue1()).isEqualTo(helloReply("Hello, Sapphire"))
+    Stream.unit.delayBy(200.milliseconds) //delay(200)?
+    // assertThat(responseChannel.isClosedForReceive).isFalse()
     clientCall.halfClose()
-    assertThat(responseChannel.toList()).isEmpty() // closed with no further responses
+    assertThat(responseChannel.tryDequeue1()).isEqualTo(None) // closed with no further responses
   }
 
   @Test
@@ -372,11 +356,11 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(serverStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = CompletableDeferred<Status>()
+    val closeStatus = Promise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          closeStatus.complete(status)
+          Stream.effect { closeStatus.complete(status) }
         }
       },
       Metadata()
@@ -386,7 +370,7 @@ class ServerCallsTest : AbstractCallsTest() {
     // message before executing the implementation, so we have to halfClose
     call.sendMessage(multiHelloRequest("Steven"))
     call.halfClose()
-    assertThat(closeStatus.await().code).isEqualTo(Status.Code.UNKNOWN)
+    assertThat(closeStatus.get().code).isEqualTo(Status.Code.UNKNOWN)
   }
 
   @Test
@@ -395,12 +379,16 @@ class ServerCallsTest : AbstractCallsTest() {
       ServerCalls.clientStreamingServerMethodDefinition(
         context,
         clientStreamingSayHelloMethod
-      ) { requests ->
-        helloReply(requests.toList().joinToString(separator = ", ", prefix = "Hello, ") { it.name })
+      ) { requests: Stream<HelloRequest> ->
+        helloReply(
+          requests
+            .compile()
+            .toList().joinToString(separator = ", ", prefix = "Hello, ") { it.name }
+        )
       }
     )
 
-    val requestChannel = flowOf(
+    val requestChannel = Stream(
       helloRequest("Ruby"),
       helloRequest("Sapphire")
     )
@@ -413,7 +401,6 @@ class ServerCallsTest : AbstractCallsTest() {
     ).isEqualTo(helloReply("Hello, Ruby, Sapphire"))
   }
 
-  @ExperimentalCoroutinesApi // take
   @Test
   fun clientStreamingDoesntWaitForAllRequests() = runBlocking {
     val channel = makeChannel(
@@ -421,12 +408,12 @@ class ServerCallsTest : AbstractCallsTest() {
         context,
         clientStreamingSayHelloMethod
       ) { requests ->
-        val (req1, req2) = requests.take(2).toList()
+        val (req1, req2) = requests.take(2).compile().toList()
         helloReply("Hello, ${req1.name} and ${req2.name}")
       }
     )
 
-    val requests = flowOf(
+    val requests = Stream(
       helloRequest("Peridot"),
       helloRequest("Lapis"),
       helloRequest("Jasper"),
@@ -441,62 +428,60 @@ class ServerCallsTest : AbstractCallsTest() {
     ).isEqualTo(helloReply("Hello, Peridot and Lapis"))
   }
 
-  @ExperimentalCoroutinesApi // take
-  @FlowPreview
   @Test
   fun clientStreamingWhenRequestsCancelledNoBackpressure() = runBlocking {
-    val barrier = Job()
+    val barrier = ForkConnected { }
     val channel = makeChannel(
       ServerCalls.clientStreamingServerMethodDefinition(
         context,
         clientStreamingSayHelloMethod
       ) { requests ->
-        val (req1, req2) = requests.take(2).toList()
+        val (req1, req2) = requests.take(2).compile().toList()
         barrier.join()
         helloReply("Hello, ${req1.name} and ${req2.name}")
       }
     )
 
-    val requestChannel = Channel<HelloRequest>()
-    val response = async {
+    val requestChannel = Queue.unbounded<HelloRequest>()
+    val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel,
         clientStreamingSayHelloMethod,
-        requestChannel.consumeAsFlow()
+        requestChannel.dequeue()
       )
     }
-    requestChannel.send(helloRequest("Lapis"))
-    requestChannel.send(helloRequest("Peridot"))
+    requestChannel.enqueue1(helloRequest("Lapis"))
+    requestChannel.enqueue1(helloRequest("Peridot"))
     for (i in 1..1000) {
-      requestChannel.send(helloRequest("Ruby"))
+      requestChannel.enqueue1(helloRequest("Ruby"))
     }
-    barrier.complete()
-    assertThat(response.await()).isEqualTo(helloReply("Hello, Lapis and Peridot"))
+    barrier.cancel()
+    assertThat(response.join()).isEqualTo(helloReply("Hello, Lapis and Peridot"))
   }
 
   @Test
   fun clientStreamingCancellationPropagatedToServer() = runBlocking {
-    val requestReceived = Job()
-    val cancelled = Job()
+    val requestReceived = ForkConnected { }
+    val cancelled = ForkConnected { }
     val channel = makeChannel(
       ServerCalls.clientStreamingServerMethodDefinition(
         context,
         clientStreamingSayHelloMethod
-      ) {
-        it.collect {
-          requestReceived.complete()
-          suspendUntilCancelled { cancelled.complete() }
+      ) { requests: Stream<HelloRequest> ->
+        requests.effectMap {
+          requestReceived.cancel()
+          suspendUntilCancelled { cancelled.cancel() }
         }
         helloReply("Impossible?")
       }
     )
 
     val call = channel.newCall(clientStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = CompletableDeferred<Status>()
+    val closeStatus = Promise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          closeStatus.complete(status)
+          Stream.effect { closeStatus.complete(status) }
         }
       },
       Metadata()
@@ -505,7 +490,7 @@ class ServerCallsTest : AbstractCallsTest() {
     requestReceived.join()
     call.cancel("Test cancellation", null)
     cancelled.join()
-    assertThat(closeStatus.await().code).isEqualTo(Status.Code.CANCELLED)
+    assertThat(closeStatus.get().code).isEqualTo(Status.Code.CANCELLED)
   }
 
   @Test
@@ -518,17 +503,17 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(clientStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = CompletableDeferred<Status>()
+    val closeStatus = Promise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          closeStatus.complete(status)
+          Stream.effect { closeStatus.complete(status) }
         }
       },
       Metadata()
     )
     call.sendMessage(helloRequest("Steven"))
-    assertThat(closeStatus.await().code).isEqualTo(Status.Code.INVALID_ARGUMENT)
+    assertThat(closeStatus.get().code).isEqualTo(Status.Code.INVALID_ARGUMENT)
   }
 
   @Test
@@ -543,67 +528,63 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(clientStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = CompletableDeferred<Status>()
+    val closeStatus = Promise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          closeStatus.complete(status)
+          Stream.effect { closeStatus.complete(status) }
         }
       },
       Metadata()
     )
     call.sendMessage(helloRequest("Steven"))
-    assertThat(closeStatus.await().code).isEqualTo(Status.Code.UNKNOWN)
+    assertThat(closeStatus.get().code).isEqualTo(Status.Code.UNKNOWN)
   }
 
-  @ExperimentalCoroutinesApi // onCompletion
-  @FlowPreview
   @Test
   fun simpleBidiStreamingPingPong() = runBlocking {
     val channel = makeChannel(
-      ServerCalls.bidiStreamingServerMethodDefinition(context, bidiStreamingSayHelloMethod) {
-        requests -> requests.map { helloReply("Hello, ${it.name}") }.onCompletion { emit(helloReply("Goodbye")) }
+      ServerCalls.bidiStreamingServerMethodDefinition(context, bidiStreamingSayHelloMethod) { requests ->
+        requests.map { helloReply("Hello, ${it.name}") }.onFinalize { Stream.just(helloReply("Goodbye")) }
       }
     )
 
-    val requests = Channel<HelloRequest>()
-    val responses =
-      ClientCalls.bidiStreamingRpc(channel, bidiStreamingSayHelloMethod, requests.consumeAsFlow())
-        .produceIn(this)
+    val requests = Queue.unbounded<HelloRequest>()
+    val responses: Queue<HelloReply> =
+      ClientCalls.bidiStreamingRpc(channel, bidiStreamingSayHelloMethod, requests.dequeue())
+        .produceIn()
 
-    requests.send(helloRequest("Garnet"))
-    assertThat(responses.receive()).isEqualTo(helloReply("Hello, Garnet"))
-    requests.send(helloRequest("Steven"))
-    assertThat(responses.receive()).isEqualTo(helloReply("Hello, Steven"))
-    requests.close()
-    assertThat(responses.receive()).isEqualTo(helloReply("Goodbye"))
-    assertThat(responses.toList()).isEmpty()
+    requests.enqueue1(helloRequest("Garnet"))
+    assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet"))
+    requests.enqueue1(helloRequest("Steven"))
+    assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Steven"))
+    //requests.close()
+    assertThat(responses.dequeue1()).isEqualTo(helloReply("Goodbye"))
+    assertThat(responses.tryDequeue1()).isEqualTo(None)
   }
 
   @Test
   fun bidiStreamingCancellationPropagatedToServer() = runBlocking {
-    val requestReceived = Job()
-    val cancelled = Job()
+    val requestReceived = ForkConnected { }
+    val cancelled = ForkConnected { }
     val channel = makeChannel(
       ServerCalls.bidiStreamingServerMethodDefinition(
         context,
         bidiStreamingSayHelloMethod
-      ) { requests ->
-        flow {
-          requests.collect {
-            requestReceived.complete()
-            suspendUntilCancelled { cancelled.complete() }
-          }
+      ) { requests: Stream<HelloRequest> ->
+        requests.effectMap {
+          requestReceived.cancel()
+          suspendUntilCancelled { cancelled.cancel() }
         }
       }
     )
 
     val call = channel.newCall(bidiStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = CompletableDeferred<Status>()
+    val closeStatus = Promise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          closeStatus.complete(status)
+          Stream.effect { closeStatus.complete(status) }
         }
       },
       Metadata()
@@ -612,7 +593,7 @@ class ServerCallsTest : AbstractCallsTest() {
     requestReceived.join()
     call.cancel("Test cancellation", null)
     cancelled.join()
-    assertThat(closeStatus.await().code).isEqualTo(Status.Code.CANCELLED)
+    assertThat(closeStatus.get().code).isEqualTo(Status.Code.CANCELLED)
   }
 
   @Test
@@ -621,21 +602,21 @@ class ServerCallsTest : AbstractCallsTest() {
       ServerCalls.bidiStreamingServerMethodDefinition(
         context,
         bidiStreamingSayHelloMethod
-      ) { flow { throw StatusException(Status.INVALID_ARGUMENT) } }
+      ) { Stream.raiseError(StatusException(Status.INVALID_ARGUMENT)) }
     )
 
     val call = channel.newCall(bidiStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = CompletableDeferred<Status>()
+    val closeStatus = Promise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          closeStatus.complete(status)
+          Stream.effect { closeStatus.complete(status) }
         }
       },
       Metadata()
     )
     call.sendMessage(helloRequest("Steven"))
-    assertThat(closeStatus.await().code).isEqualTo(Status.Code.INVALID_ARGUMENT)
+    assertThat(closeStatus.get().code).isEqualTo(Status.Code.INVALID_ARGUMENT)
   }
 
   @Test
@@ -648,17 +629,17 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(bidiStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = CompletableDeferred<Status>()
+    val closeStatus = Promise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          closeStatus.complete(status)
+          Stream.effect { closeStatus.complete(status) }
         }
       },
       Metadata()
     )
     call.sendMessage(helloRequest("Steven"))
-    assertThat(closeStatus.await().code).isEqualTo(Status.Code.UNKNOWN)
+    assertThat(closeStatus.get().code).isEqualTo(Status.Code.UNKNOWN)
   }
 
   @Test
@@ -694,8 +675,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
   @Test
   fun unaryContextPropagated() = runBlocking {
-    val differentThreadContext: CoroutineContext =
-      Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+    val differentThreadContext: CoroutineContext = IOPool
     val contextKey = Context.key<String>("testKey")
     val contextToInject = Context.ROOT.withValue(contextKey, "testValue")
 
@@ -716,7 +696,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
-        withContext(differentThreadContext) {
+        evalOn(differentThreadContext) {
           // Run this in a definitely different thread, just to verify context propagation
           // is WAI.
           assertThat(contextKey.get(Context.current())).isEqualTo("testValue")
@@ -730,43 +710,45 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(stub.sayHello(helloRequest("Peridot"))).isEqualTo(helloReply("Hello, Peridot"))
   }
 
-  @ExperimentalCoroutinesApi
-  @FlowPreview
   @Test
   fun serverStreamingFlowControl() = runBlocking {
-    val receiveFirstMessage = Job()
-    val receivedFirstMessage = Job()
-    val channel = makeChannel(
+    val receiveFirstMessage = ForkConnected { }
+    val receivedFirstMessage = ForkConnected { }
+    val channel: ManagedChannel = makeChannel(
       ServerCalls.serverStreamingServerMethodDefinition(
         EmptyCoroutineContext,
         serverStreamingSayHelloMethod
       ) {
-        channelFlow {
-          send(helloReply("1st"))
-          send(helloReply("2nd"))
-          val thirdSend = launch {
-            send(helloReply("3rd"))
+        // TODO check this again!!!
+        Stream.effect {
+          val queue = Queue.unbounded<HelloReply>()
+          queue.enqueue1(helloReply("1st"))
+          queue.enqueue1(helloReply("2nd"))
+          val thirdSend = ForkConnected {
+            queue.enqueue1(helloReply("3rd"))
           }
-          delay(200)
-          assertThat(thirdSend.isCompleted).isFalse()
-          receiveFirstMessage.complete()
+          Stream.unit.delayBy(200.milliseconds) // ?
+          // assertThat(thirdSend.isCompleted).isFalse() how to check state
+          receiveFirstMessage.cancel()
           receivedFirstMessage.join()
           thirdSend.join()
-        }.buffer(Channel.RENDEZVOUS)
+          // TODO check this!!!
+          queue.dequeue().compile().lastOrError()
+        }.buffer(0) // Channel.RENDEZVOUS, see [kotlinx.coroutines.channels.RendezvousChannel]
       }
     )
 
-    val responses = produce<HelloReply> {
-      ClientCalls.serverStreamingRpc(
-        channel,
-        serverStreamingSayHelloMethod,
-        multiHelloRequest()
-      ).collect { send(it) }
-    }
+    val responses = ClientCalls.serverStreamingRpc(
+      channel,
+      serverStreamingSayHelloMethod,
+      multiHelloRequest()
+    ).produceIn()
     receiveFirstMessage.join()
-    assertThat(responses.receive()).isEqualTo(helloReply("1st"))
-    receivedFirstMessage.complete()
-    assertThat(responses.toList()).containsExactly(helloReply("2nd"), helloReply("3rd"))
+    assertThat(responses.dequeue1()).isEqualTo(helloReply("1st"))
+    receivedFirstMessage.cancel()
+    assertThat(
+      responses.dequeue().compile().toList()
+    ).containsExactly(helloReply("2nd"), helloReply("3rd"))
   }
 
   @Test

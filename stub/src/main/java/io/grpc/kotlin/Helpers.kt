@@ -19,6 +19,7 @@ package io.grpc.kotlin
 import arrow.fx.coroutines.stream.Pull
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.compile
+import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.flatMap
 import arrow.fx.coroutines.stream.stream
 import arrow.fx.coroutines.stream.unconsOrNull
@@ -76,5 +77,17 @@ internal fun <T> Stream<T>.singleOrStatusStream(
 internal suspend fun <T> Stream<T>.singleOrStatus(
   expected: String,
   descriptor: Any
-): T =
-  singleOrStatusStream(expected, descriptor).take(1).compile().lastOrNull()!!
+): T = singleOrStatusStream(expected, descriptor).take(1).compile().lastOrNull()!!
+
+// TODO do we have something like this already? the idea is to control backpressure behavior
+/*
+  @FlowPreview
+  public fun <T> Flow<T>.produceIn(scope: CoroutineScope): ReceiveChannel<T> =
+      asChannelFlow().produceImpl(scope)
+ */
+suspend fun <T> Stream<T>.produceIn(): Queue<T> =
+  compile().toList().let { list: List<T> ->
+    val queue = Queue.bounded<T>(list.size)
+    list.forEach { queue.enqueue1(it) }
+    queue
+  }

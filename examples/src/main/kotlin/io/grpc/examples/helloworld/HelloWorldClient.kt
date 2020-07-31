@@ -18,7 +18,7 @@ package io.grpc.examples.helloworld
 
 import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
-import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterCoroutineStub
+import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterArrowCoroutineStub
 import java.io.Closeable
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +28,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 
 class HelloWorldClient constructor(private val channel: ManagedChannel) : Closeable {
-    private val stub: GreeterCoroutineStub = GreeterCoroutineStub(channel)
+    private val stub: GreeterArrowCoroutineStub = GreeterArrowCoroutineStub(channel)
 
     suspend fun greet(name: String) = coroutineScope {
         val request = HelloRequest.newBuilder().setName(name).build()

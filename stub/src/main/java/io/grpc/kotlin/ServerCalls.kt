@@ -21,7 +21,7 @@ import arrow.fx.coroutines.Fiber
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
-import arrow.fx.coroutines.stream.Stream.Companion.emits
+import arrow.fx.coroutines.stream.Stream.Companion.just
 import arrow.fx.coroutines.stream.Stream.Companion.raiseError
 import arrow.fx.coroutines.stream.Stream.Companion.unit
 import arrow.fx.coroutines.stream.compile
@@ -132,11 +132,8 @@ object ServerCalls {
     return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
       effect {
         requests
+          .singleOrStatusStream("request", descriptor)
           .flatMap { implementation(it) }
-          .compile()
-          .lastOrError().let {
-            emits(it)
-          }
       }.flatten()
     }
   }
@@ -204,12 +201,10 @@ object ServerCalls {
     call: ServerCall<RequestT, ResponseT>,
     implementation: (Stream<RequestT>) -> Stream<ResponseT>
   ): ServerCall.Listener<RequestT> {
-
     call.sendHeaders(GrpcMetadata())
 
     val readiness = Readiness { call.isReady }
     val requestsChannel: Queue<RequestT> = Environment(context).unsafeRunSync { Queue.bounded<RequestT>(1) }
-    // val requestsChannel = ConcurrentVar.unsafeEmpty<RequestT>()
 
     val requestsStarted = AtomicBoolean(false) // enforces read-once
 
@@ -244,7 +239,7 @@ object ServerCalls {
       }
     }, { fiber: Fiber<Unit?> ->
       fiber.cancel()
-      val failure = Throwable("FIXME")
+      val failure: Throwable? = Throwable("FIXME")
       //val failure = cause ?: rpcJob.doneValue
       val closeStatus = when (failure) {
         null -> Status.OK
@@ -269,7 +264,7 @@ object ServerCalls {
         if (isReceiving) {
           // TODO: Change effect when `tryOffer1` is added
           effect {
-            if (!requestsChannel.offer1(message)) {
+            if (!requestsChannel.tryOffer1(message)) {
               raiseError<StatusException>(Status.INTERNAL
                 .withDescription(
                   "onMessage should never be called when requestsChannel is unready"
@@ -281,7 +276,7 @@ object ServerCalls {
           }.handleErrorWith {
             // we don't want any more client input; swallow it
             isReceiving = false
-            unit
+            raiseError(it)
           }
         }
         if (!isReceiving) {

@@ -15,6 +15,7 @@
  */
 package io.grpc.testing.integration
 
+import arrow.fx.coroutines.stream.compile
 import com.google.auth.oauth2.ComputeEngineCredentials
 import com.google.auth.oauth2.GoogleCredentials
 import com.google.auth.oauth2.OAuth2Credentials
@@ -197,7 +198,7 @@ abstract class AbstractInteropTest {
 
   protected lateinit var channel: ManagedChannel
 
-  protected lateinit var stub: TestServiceGrpcKt.TestServiceCoroutineStub
+  protected lateinit var stub: TestServiceGrpcKt.TestServiceArrowCoroutineStub
 
   // to be deleted when subclasses are ready to migrate
   @JvmField
@@ -239,7 +240,7 @@ abstract class AbstractInteropTest {
     startServer()
     channel = createChannel()
     stub =
-      TestServiceGrpcKt.TestServiceCoroutineStub(channel).withInterceptors(tracerSetupInterceptor)
+      TestServiceGrpcKt.TestServiceArrowCoroutineStub(channel).withInterceptors(tracerSetupInterceptor)
     blockingStub = TestServiceGrpc.newBlockingStub(channel).withInterceptors(tracerSetupInterceptor)
     asyncStub = TestServiceGrpc.newStub(channel).withInterceptors(tracerSetupInterceptor)
     val additionalInterceptors = additionalInterceptors
@@ -461,799 +462,799 @@ abstract class AbstractInteropTest {
         .build()
     )
     runBlocking {
-      assertResponses(goldenResponses, stub.streamingOutputCall(request).toList())
+      assertResponses(goldenResponses, stub.streamingOutputCall(request).compile().toList())
     }
   }
-
-  @Test
-  fun clientStreaming() {
-    val requests = Arrays.asList(
-      StreamingInputCallRequest.newBuilder()
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(27182)))
-        )
-        .build(),
-      StreamingInputCallRequest.newBuilder()
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(8)))
-        )
-        .build(),
-      StreamingInputCallRequest.newBuilder()
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(1828)))
-        )
-        .build(),
-      StreamingInputCallRequest.newBuilder()
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(45904)))
-        )
-        .build()
-    )
-    val goldenResponse = StreamingInputCallResponse.newBuilder()
-      .setAggregatedPayloadSize(74922)
-      .build()
-    val response = runBlocking {
-      stub.streamingInputCall(requests.asFlow())
-    }
-    assertEquals(goldenResponse, response)
-  }
-
-  /**
-   * Unsupported.
-   */
-  open fun clientCompressedStreaming(probe: Boolean) {
-    val expectCompressedRequest = StreamingInputCallRequest.newBuilder()
-      .setExpectCompressed(BoolValue.newBuilder().setValue(true))
-      .setPayload(Payload.newBuilder().setBody(ByteString.copyFrom(ByteArray(27182))))
-      .build()
-
-    if (probe) {
-      runBlocking {
-        val ex = assertFailsWith<StatusException> {
-          // Send a non-compressed message with expectCompress=true. Servers supporting this test
-          // case should return INVALID_ARGUMENT.
-          stub.streamingInputCall(flowOf(expectCompressedRequest))
-        }
-        assertEquals(Status.INVALID_ARGUMENT.code, ex.status.code)
-      }
-    }
-    // the Kotlin API doesn't expose control over compression
-  }
-
-  /**
-   * Tests server per-message compression in a streaming response. Ideally we would assert that the
-   * responses have the requested compression, but this is not supported by the API. Given a
-   * compliant server, this test will exercise the code path for receiving a compressed response but
-   * cannot itself verify that the response was compressed.
-   */
-  fun serverCompressedStreaming() {
-    val request = StreamingOutputCallRequest.newBuilder()
-      .addResponseParameters(
-        ResponseParameters.newBuilder()
-          .setCompressed(BoolValue.newBuilder().setValue(true))
-          .setSize(31415)
-      )
-      .addResponseParameters(
-        ResponseParameters.newBuilder()
-          .setCompressed(BoolValue.newBuilder().setValue(false))
-          .setSize(92653)
-      )
-      .build()
-    val goldenResponses = Arrays.asList(
-      StreamingOutputCallResponse.newBuilder()
-        .setPayload(Payload.newBuilder().setBody(ByteString.copyFrom(ByteArray(31415))))
-        .build(),
-      StreamingOutputCallResponse.newBuilder()
-        .setPayload(Payload.newBuilder().setBody(ByteString.copyFrom(ByteArray(92653))))
-        .build()
-    )
-    runBlocking {
-      assertResponses(goldenResponses, stub.streamingOutputCall(request).toList())
-    }
-  }
-
-  @Test
-  fun pingPong() {
-    val requests = Arrays.asList(
-      StreamingOutputCallRequest.newBuilder()
-        .addResponseParameters(
-          ResponseParameters.newBuilder()
-            .setSize(31415)
-        )
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(27182)))
-        )
-        .build(),
-      StreamingOutputCallRequest.newBuilder()
-        .addResponseParameters(
-          ResponseParameters.newBuilder()
-            .setSize(9)
-        )
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(8)))
-        )
-        .build(),
-      StreamingOutputCallRequest.newBuilder()
-        .addResponseParameters(
-          ResponseParameters.newBuilder()
-            .setSize(2653)
-        )
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(1828)))
-        )
-        .build(),
-      StreamingOutputCallRequest.newBuilder()
-        .addResponseParameters(
-          ResponseParameters.newBuilder()
-            .setSize(58979)
-        )
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(45904)))
-        )
-        .build()
-    )
-    val goldenResponses = listOf(
-      StreamingOutputCallResponse.newBuilder()
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(31415)))
-        )
-        .build(),
-      StreamingOutputCallResponse.newBuilder()
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(9)))
-        )
-        .build(),
-      StreamingOutputCallResponse.newBuilder()
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(2653)))
-        )
-        .build(),
-      StreamingOutputCallResponse.newBuilder()
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(58979)))
-        )
-        .build()
-    )
-    runBlocking {
-      // TODO: per-element timeout
-      assertResponses(goldenResponses, stub.fullDuplexCall(requests.asFlow()).toList())
-    }
-  }
-
-  @Test
-  fun emptyStream() {
-    runBlocking {
-      assertResponses(listOf(), stub.fullDuplexCall(flowOf()).toList())
-    }
-  }
-
-  @Test
-  fun cancelAfterBegin() {
-    class MyEx : Exception()
-    runBlocking {
-      assertFailsWith<MyEx> {
-        stub.streamingInputCall(
-          flow {
-            throw MyEx()
-          }
-        )
-      }
-    }
-  }
-
-  @Test
-  fun cancelAfterFirstResponse() {
-    val request = StreamingOutputCallRequest.newBuilder()
-      .addResponseParameters(
-        ResponseParameters.newBuilder()
-          .setSize(31415)
-      )
-      .setPayload(
-        Payload.newBuilder()
-          .setBody(ByteString.copyFrom(ByteArray(27182)))
-      )
-      .build()
-
-    runBlocking {
-      val ex = assertFailsWith<StatusException> {
-        stub
-          .fullDuplexCall(
-            flow {
-              emit(request)
-              throw CancellationException()
-            }
-          )
-          .collect()
-      }
-      assertThat(ex.status.code).isEqualTo(Status.Code.CANCELLED)
-    }
-    assertStatsTrace("grpc.testing.TestService/FullDuplexCall", Status.Code.CANCELLED)
-  }
-
-  @Test
-  fun fullDuplexCallShouldSucceed() { // Build the request.
-    val responseSizes = listOf(50, 100, 150, 200)
-    val streamingOutputBuilder = StreamingOutputCallRequest.newBuilder()
-    for (size in responseSizes) {
-      streamingOutputBuilder.addResponseParameters(
-        ResponseParameters.newBuilder().setSize(size).setIntervalUs(0)
-      )
-    }
-    val request = streamingOutputBuilder.build()
-    val numRequests = 10
-    val responses = runBlocking {
-      stub.fullDuplexCall(
-        (1..numRequests).asFlow().map { request }
-      ).toList()
-    }
-    assertEquals(responseSizes.size * numRequests, responses.size)
-    for ((ix, response) in responses.withIndex()) {
-      val length = response.payload.body.size()
-      val expectedSize = responseSizes[ix % responseSizes.size]
-      assertEquals("comparison failed at index $ix", expectedSize.toLong(), length.toLong())
-    }
-    assertStatsTrace(
-      "grpc.testing.TestService/FullDuplexCall",
-      Status.Code.OK,
-      List(numRequests) { request },
-      responses
-    )
-  }
-
-  @Test
-  fun halfDuplexCallShouldSucceed() { // Build the request.
-    val responseSizes = listOf(50, 100, 150, 200)
-    val streamingOutputBuilder = StreamingOutputCallRequest.newBuilder()
-    for (size in responseSizes) {
-      streamingOutputBuilder.addResponseParameters(
-        ResponseParameters.newBuilder().setSize(size).setIntervalUs(0)
-      )
-    }
-    val request = streamingOutputBuilder.build()
-
-    val numRequests = 10
-    val responses = runBlocking {
-      stub.halfDuplexCall((1..numRequests).asFlow().map { request }).toList()
-    }
-    assertEquals(responseSizes.size * numRequests, responses.size)
-    for ((ix, response) in responses.withIndex()) {
-      val length = response.payload.body.size()
-      val expectedSize = responseSizes[ix % responseSizes.size]
-      assertEquals("comparison failed at index $ix", expectedSize.toLong(), length.toLong())
-    }
-  }
-
-  @Test
-  fun serverStreamingShouldBeFlowControlled() {
-    val request = StreamingOutputCallRequest.newBuilder()
-      .addResponseParameters(ResponseParameters.newBuilder().setSize(100000))
-      .addResponseParameters(ResponseParameters.newBuilder().setSize(100001))
-      .build()
-    val goldenResponses = Arrays.asList(
-      StreamingOutputCallResponse.newBuilder()
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(100000)))
-        ).build(),
-      StreamingOutputCallResponse.newBuilder()
-        .setPayload(
-          Payload.newBuilder()
-            .setBody(ByteString.copyFrom(ByteArray(100001)))
-        ).build()
-    )
-    val start = System.nanoTime()
-
-    // TODO(lowasser): change this to a Channel
-    val queue = ArrayBlockingQueue<Any>(10)
-    val call = channel.newCall(TestServiceGrpc.getStreamingOutputCallMethod(), CallOptions.DEFAULT)
-    call.start(
-      object : ClientCall.Listener<StreamingOutputCallResponse>() {
-        override fun onHeaders(headers: Metadata) {}
-        override fun onMessage(message: StreamingOutputCallResponse) {
-          queue.add(message)
-        }
-
-        override fun onClose(status: Status, trailers: Metadata) {
-          queue.add(status)
-        }
-      },
-      Metadata()
-    )
-    call.sendMessage(request)
-    call.halfClose()
-    // Time how long it takes to get the first response.
-    call.request(1)
-    var response = queue.poll(operationTimeoutMillis().toLong(), TimeUnit.MILLISECONDS)
-    assertTrue(response is StreamingOutputCallResponse)
-    assertResponse(goldenResponses[0], response as StreamingOutputCallResponse)
-    val firstCallDuration = System.nanoTime() - start
-    // Without giving additional flow control, make sure that we don't get another response. We wait
-    // until we are comfortable the next message isn't coming. We may have very low nanoTime
-    // resolution (like on Windows) or be using a testing, in-process transport where message
-    // handling is instantaneous. In both cases, firstCallDuration may be 0, so round up sleep time
-    // to at least 1ms.
-    assertNull(
-      queue.poll(max(firstCallDuration * 4, 1 * 1000 * 1000.toLong()), TimeUnit.NANOSECONDS)
-    )
-    // Make sure that everything still completes.
-    call.request(1)
-    response = queue.poll(operationTimeoutMillis().toLong(), TimeUnit.MILLISECONDS)
-    assertTrue(response is StreamingOutputCallResponse)
-    assertResponse(goldenResponses[1], response as StreamingOutputCallResponse)
-    assertEquals(Status.OK, queue.poll(operationTimeoutMillis().toLong(), TimeUnit.MILLISECONDS))
-  }
-
-  @Test
-  fun veryLargeRequest() {
-    assumeEnoughMemory()
-    val request = SimpleRequest.newBuilder()
-      .setPayload(
-        Payload.newBuilder()
-          .setBody(ByteString.copyFrom(ByteArray(unaryPayloadLength())))
-      )
-      .setResponseSize(10)
-      .build()
-    val goldenResponse = SimpleResponse.newBuilder()
-      .setPayload(
-        Payload.newBuilder()
-          .setBody(ByteString.copyFrom(ByteArray(10)))
-      )
-      .build()
-    runBlocking {
-      assertResponse(goldenResponse, stub.unaryCall(request))
-    }
-  }
-
-  @Test
-  fun veryLargeResponse() {
-    assumeEnoughMemory()
-    val request = SimpleRequest.newBuilder()
-      .setResponseSize(unaryPayloadLength())
-      .build()
-    val goldenResponse = SimpleResponse.newBuilder()
-      .setPayload(
-        Payload.newBuilder()
-          .setBody(ByteString.copyFrom(ByteArray(unaryPayloadLength())))
-      )
-      .build()
-    runBlocking {
-      assertResponse(goldenResponse, stub.unaryCall(request))
-    }
-  }
-
-  @Test
-  fun exchangeMetadataUnaryCall() {
-    // Capture the metadata exchange
-    val fixedHeaders = Metadata()
-    // Send a context proto (as it's in the default extension registry)
-    val contextValue = SimpleContext.newBuilder().setValue("dog").build()
-    fixedHeaders.put(Util.METADATA_KEY, contextValue)
-    stub = MetadataUtils.attachHeaders(stub, fixedHeaders)
-    // .. and expect it to be echoed back in trailers
-    val trailersCapture = AtomicReference<Metadata>()
-    val headersCapture = AtomicReference<Metadata>()
-    stub = MetadataUtils.captureMetadata(stub, headersCapture, trailersCapture)
-    runBlocking {
-      assertNotNull(stub.emptyCall(EMPTY))
-    }
-    // Assert that our side channel object is echoed back in both headers and trailers
-    assertEquals(contextValue, headersCapture.get().get(Util.METADATA_KEY))
-    assertEquals(contextValue, trailersCapture.get().get(Util.METADATA_KEY))
-  }
-
-  @Test
-  fun exchangeMetadataStreamingCall() {
-    // Capture the metadata exchange
-    val fixedHeaders = Metadata()
-    // Send a context proto (as it's in the default extension registry)
-    val contextValue = SimpleContext.newBuilder().setValue("dog").build()
-    fixedHeaders.put(Util.METADATA_KEY, contextValue)
-    stub = MetadataUtils.attachHeaders(stub, fixedHeaders)
-    // .. and expect it to be echoed back in trailers
-    val trailersCapture = AtomicReference<Metadata>()
-    val headersCapture = AtomicReference<Metadata>()
-    stub = MetadataUtils.captureMetadata(stub, headersCapture, trailersCapture)
-    val responseSizes = listOf(50, 100, 150, 200)
-    val streamingOutputBuilder = StreamingOutputCallRequest.newBuilder()
-    for (size in responseSizes) {
-      streamingOutputBuilder.addResponseParameters(
-        ResponseParameters.newBuilder().setSize(size).setIntervalUs(0)
-      )
-    }
-    val request = streamingOutputBuilder.build()
-
-    val numRequests = 10
-    val responses = runBlocking {
-      stub.fullDuplexCall((1..numRequests).asFlow().map { request }).toList()
-    }
-    assertEquals(responseSizes.size * numRequests, responses.size)
-    // Assert that our side channel object is echoed back in both headers and trailers
-    assertEquals(contextValue, headersCapture.get().get(Util.METADATA_KEY))
-    assertEquals(contextValue, trailersCapture.get().get(Util.METADATA_KEY))
-  }
-
-  @Test
-  fun deadlineNotExceeded() {
-    runBlocking {
-      // warm up the channel and JVM
-      stub.emptyCall(EmptyProtos.Empty.getDefaultInstance())
-      stub
-        .withDeadlineAfter(10, TimeUnit.SECONDS)
-        .streamingOutputCall(
-          StreamingOutputCallRequest.newBuilder()
-            .addResponseParameters(
-              ResponseParameters.newBuilder()
-                .setIntervalUs(0)
-            )
-            .build()
-        )
-        .first()
-    }
-  }
-
-  @Test
-  fun deadlineExceeded() {
-    runBlocking {
-      // warm up the channel and JVM
-      stub.emptyCall(EmptyProtos.Empty.getDefaultInstance())
-      val request = StreamingOutputCallRequest.newBuilder()
-        .addResponseParameters(
-          ResponseParameters.newBuilder()
-            .setIntervalUs(TimeUnit.SECONDS.toMicros(20).toInt())
-        )
-        .build()
-      try {
-        stub.withDeadlineAfter(100, TimeUnit.MILLISECONDS).streamingOutputCall(request).first()
-        fail("Expected deadline to be exceeded")
-      } catch (ex: StatusException) {
-        assertEquals(Status.DEADLINE_EXCEEDED.code, ex.status.code)
-        val desc = ex.status.description
-        assertTrue(
-          desc, // There is a race between client and server-side deadline expiration.
-          // If client expires first, it'd generate this message
-          Pattern.matches("deadline exceeded after .*s. \\[.*\\]", desc!!) ||
-            // If server expires first, it'd reset the stream and client would generate a different
-            // message
-            desc.startsWith("ClientCall was cancelled at or after deadline.")
-        )
-      }
-      assertStatsTrace("grpc.testing.TestService/EmptyCall", Status.Code.OK)
-    }
-  }
-
-  @Test
-  fun deadlineExceededServerStreaming() {
-    runBlocking {
-      // warm up the channel and JVM
-      stub.emptyCall(EmptyProtos.Empty.getDefaultInstance())
-      val responseParameters = ResponseParameters.newBuilder()
-        .setSize(1)
-        .setIntervalUs(10000)
-      val request = StreamingOutputCallRequest.newBuilder()
-        .addResponseParameters(responseParameters)
-        .addResponseParameters(responseParameters)
-        .addResponseParameters(responseParameters)
-        .addResponseParameters(responseParameters)
-        .build()
-      val statusEx = assertFailsWith<StatusException> {
-        stub
-          .withDeadlineAfter(30, TimeUnit.MILLISECONDS)
-          .streamingOutputCall(request)
-          .collect()
-      }
-      assertEquals(Status.DEADLINE_EXCEEDED.code, statusEx.status.code)
-      assertStatsTrace("grpc.testing.TestService/EmptyCall", Status.Code.OK)
-    }
-  }
-
-  @Test
-  fun deadlineInPast() { // Test once with idle channel and once with active channel
-    runBlocking {
-      try {
-        stub
-          .withDeadlineAfter(-10, TimeUnit.SECONDS)
-          .emptyCall(EmptyProtos.Empty.getDefaultInstance())
-        fail("Should have thrown")
-      } catch (ex: StatusException) {
-        assertEquals(Status.Code.DEADLINE_EXCEEDED, ex.status.code)
-        assertThat(ex.status.description)
-          .startsWith("ClientCall started after deadline exceeded")
-      }
-      // warm up the channel
-      stub.emptyCall(EmptyProtos.Empty.getDefaultInstance())
-      try {
-        stub
-          .withDeadlineAfter(-10, TimeUnit.SECONDS)
-          .emptyCall(EmptyProtos.Empty.getDefaultInstance())
-        fail("Should have thrown")
-      } catch (ex: StatusException) {
-        assertEquals(Status.Code.DEADLINE_EXCEEDED, ex.status.code)
-        assertThat(ex.status.description)
-          .startsWith("ClientCall started after deadline exceeded")
-      }
-      assertStatsTrace("grpc.testing.TestService/EmptyCall", Status.Code.OK)
-    }
-  }
-
-  protected fun unaryPayloadLength(): Int { // 10MiB.
-    return 10485760
-  }
-
-  @Test
-  fun gracefulShutdown() {
-    runBlocking {
-      val requests = listOf(
-        StreamingOutputCallRequest.newBuilder()
-          .addResponseParameters(
-            ResponseParameters.newBuilder()
-              .setSize(3)
-          )
-          .setPayload(
-            Payload.newBuilder()
-              .setBody(ByteString.copyFrom(ByteArray(2)))
-          )
-          .build(),
-        StreamingOutputCallRequest.newBuilder()
-          .addResponseParameters(
-            ResponseParameters.newBuilder()
-              .setSize(1)
-          )
-          .setPayload(
-            Payload.newBuilder()
-              .setBody(ByteString.copyFrom(ByteArray(7)))
-          )
-          .build(),
-        StreamingOutputCallRequest.newBuilder()
-          .addResponseParameters(
-            ResponseParameters.newBuilder()
-              .setSize(4)
-          )
-          .setPayload(
-            Payload.newBuilder()
-              .setBody(ByteString.copyFrom(ByteArray(1)))
-          )
-          .build()
-      )
-      val goldenResponses = listOf(
-        StreamingOutputCallResponse.newBuilder()
-          .setPayload(
-            Payload.newBuilder()
-              .setBody(ByteString.copyFrom(ByteArray(3)))
-          )
-          .build(),
-        StreamingOutputCallResponse.newBuilder()
-          .setPayload(
-            Payload.newBuilder()
-              .setBody(ByteString.copyFrom(ByteArray(1)))
-          )
-          .build(),
-        StreamingOutputCallResponse.newBuilder()
-          .setPayload(
-            Payload.newBuilder()
-              .setBody(ByteString.copyFrom(ByteArray(4)))
-          )
-          .build()
-      )
-
-      val requestChannel = kotlinx.coroutines.channels.Channel<StreamingOutputCallRequest>()
-
-      val responses = stub.fullDuplexCall(requestChannel.consumeAsFlow()).produceIn(this)
-
-      requestChannel.send(requests[0])
-      assertResponse(goldenResponses[0], responses.receive())
-      // Initiate graceful shutdown.
-      channel.shutdown()
-      requestChannel.send(requests[1])
-      assertResponse(goldenResponses[1], responses.receive())
-      // The previous ping-pong could have raced with the shutdown, but this one certainly shouldn't.
-      requestChannel.send(requests[2])
-      assertResponse(goldenResponses[2], responses.receive())
-      assertFalse(responses.isClosedForReceive)
-      requestChannel.close()
-      assertThat(responses.toList()).isEmpty()
-    }
-  }
-
-  @Test
-  fun customMetadata() {
-    val responseSize = 314159
-    val requestSize = 271828
-    val request = SimpleRequest.newBuilder()
-      .setResponseSize(responseSize)
-      .setPayload(
-        Payload.newBuilder()
-          .setBody(ByteString.copyFrom(ByteArray(requestSize)))
-      )
-      .build()
-    val streamingRequest = StreamingOutputCallRequest.newBuilder()
-      .addResponseParameters(ResponseParameters.newBuilder().setSize(responseSize))
-      .setPayload(Payload.newBuilder().setBody(ByteString.copyFrom(ByteArray(requestSize))))
-      .build()
-    val goldenResponse = SimpleResponse.newBuilder()
-      .setPayload(
-        Payload.newBuilder()
-          .setBody(ByteString.copyFrom(ByteArray(responseSize)))
-      )
-      .build()
-    val goldenStreamingResponse = StreamingOutputCallResponse.newBuilder()
-      .setPayload(
-        Payload.newBuilder()
-          .setBody(ByteString.copyFrom(ByteArray(responseSize)))
-      )
-      .build()
-    val trailingBytes =
-      byteArrayOf(
-        0xa.toByte(), 0xb.toByte(), 0xa.toByte(), 0xb.toByte(), 0xa.toByte(), 0xb.toByte()
-      )
-    // Test UnaryCall
-    var metadata = Metadata()
-    metadata.put(Util.ECHO_INITIAL_METADATA_KEY, "test_initial_metadata_value")
-    metadata.put(Util.ECHO_TRAILING_METADATA_KEY, trailingBytes)
-    var theStub = stub
-    theStub = MetadataUtils.attachHeaders(theStub, metadata)
-    var headersCapture = AtomicReference<Metadata>()
-    var trailersCapture = AtomicReference<Metadata>()
-    theStub = MetadataUtils.captureMetadata(theStub, headersCapture, trailersCapture)
-    val response = runBlocking { theStub.unaryCall(request) }
-    assertResponse(goldenResponse, response)
-    assertEquals(
-      "test_initial_metadata_value",
-      headersCapture.get().get(Util.ECHO_INITIAL_METADATA_KEY)
-    )
-    assertTrue(
-      Arrays.equals(trailingBytes, trailersCapture.get().get(Util.ECHO_TRAILING_METADATA_KEY))
-    )
-    assertStatsTrace(
-      "grpc.testing.TestService/UnaryCall", Status.Code.OK, setOf(request), setOf(goldenResponse)
-    )
-    // Test FullDuplexCall
-    metadata = Metadata()
-    metadata.put(Util.ECHO_INITIAL_METADATA_KEY, "test_initial_metadata_value")
-    metadata.put(Util.ECHO_TRAILING_METADATA_KEY, trailingBytes)
-
-    var theStreamingStub = stub
-    theStreamingStub = MetadataUtils.attachHeaders(theStreamingStub, metadata)
-    headersCapture = AtomicReference()
-    trailersCapture = AtomicReference()
-    theStreamingStub = MetadataUtils.captureMetadata(theStreamingStub, headersCapture, trailersCapture)
-    runBlocking {
-      assertResponse(goldenStreamingResponse, theStreamingStub.fullDuplexCall(flowOf(streamingRequest)).single())
-    }
-    assertEquals(
-      "test_initial_metadata_value",
-      headersCapture.get().get(Util.ECHO_INITIAL_METADATA_KEY)
-    )
-    assertTrue(
-      Arrays.equals(trailingBytes, trailersCapture.get().get(Util.ECHO_TRAILING_METADATA_KEY))
-    )
-    assertStatsTrace(
-      "grpc.testing.TestService/FullDuplexCall",
-      Status.Code.OK,
-      setOf(streamingRequest),
-      setOf(goldenStreamingResponse)
-    )
-  }
-
-  @Test
-  fun statusCodeAndMessage() {
-    runBlocking {
-      val errorCode = 2
-      val errorMessage = "test status message"
-      val responseStatus = EchoStatus.newBuilder()
-        .setCode(errorCode)
-        .setMessage(errorMessage)
-        .build()
-      val simpleRequest = SimpleRequest.newBuilder()
-        .setResponseStatus(responseStatus)
-        .build()
-      val streamingRequest = StreamingOutputCallRequest.newBuilder()
-        .setResponseStatus(responseStatus)
-        .build()
-      // Test UnaryCall
-      try {
-        stub.unaryCall(simpleRequest)
-        fail()
-      } catch (e: StatusException) {
-        assertEquals(Status.UNKNOWN.code, e.status.code)
-        assertEquals(errorMessage, e.status.description)
-      }
-      assertStatsTrace("grpc.testing.TestService/UnaryCall", Status.Code.UNKNOWN)
-      // Test FullDuplexCall
-      val status = assertFailsWith<StatusException> {
-        stub.fullDuplexCall(flowOf(streamingRequest)).collect()
-      }.status
-      assertEquals(Status.UNKNOWN.code, status.code)
-      assertEquals(errorMessage, status.description)
-      assertStatsTrace("grpc.testing.TestService/FullDuplexCall", Status.Code.UNKNOWN)
-    }
-  }
-
-  @Test
-  fun specialStatusMessage() {
-    val errorCode = 2
-    val errorMessage = "\t\ntest with whitespace\r\nand Unicode BMP ☺ and non-BMP 😈\t\n"
-    val simpleRequest = SimpleRequest.newBuilder()
-      .setResponseStatus(
-        EchoStatus.newBuilder()
-          .setCode(errorCode)
-          .setMessage(errorMessage)
-          .build()
-      )
-      .build()
-    runBlocking {
-      try {
-        stub.unaryCall(simpleRequest)
-        fail()
-      } catch (e: StatusException) {
-        assertEquals(Status.UNKNOWN.code, e.status.code)
-        assertEquals(errorMessage, e.status.description)
-      }
-    }
-    assertStatsTrace("grpc.testing.TestService/UnaryCall", Status.Code.UNKNOWN)
-  }
-
-  /** Sends an rpc to an unimplemented method within TestService.  */
-  @Test
-  fun unimplementedMethod() {
-    runBlocking {
-      val ex = assertFailsWith<StatusException> {
-        stub.unimplementedCall(EmptyProtos.Empty.getDefaultInstance())
-      }
-      assertEquals(Status.UNIMPLEMENTED.code, ex.status.code)
-      assertClientStatsTrace(
-        "grpc.testing.TestService/UnimplementedCall",
-        Status.Code.UNIMPLEMENTED
-      )
-    }
-  }
-
-  /** Sends an rpc to an unimplemented service on the server.  */
-  @Test
-  fun unimplementedService() {
-    val stub =
-      UnimplementedServiceGrpcKt.UnimplementedServiceCoroutineStub(channel)
-        .withInterceptors(tracerSetupInterceptor)
-    runBlocking {
-      val ex = assertFailsWith<StatusException> {
-        stub.unimplementedCall(EmptyProtos.Empty.getDefaultInstance())
-      }
-      assertEquals(Status.UNIMPLEMENTED.code, ex.status.code)
-    }
-    assertStatsTrace(
-      "grpc.testing.UnimplementedService/UnimplementedCall",
-      Status.Code.UNIMPLEMENTED
-    )
-  }
-
-  /** Start a fullDuplexCall which the server will not respond, and verify the deadline expires.  */
-  @Test
-  fun timeoutOnSleepingServer() {
-    val stub = stub.withDeadlineAfter(1, TimeUnit.MILLISECONDS)
-    val request = StreamingOutputCallRequest.newBuilder()
-      .setPayload(
-        Payload.newBuilder()
-          .setBody(ByteString.copyFrom(ByteArray(27182)))
-      )
-      .build()
-    runBlocking {
-      val caught = CompletableDeferred<Throwable>()
-      val responses = stub.fullDuplexCall(flowOf(request)).catch { caught.complete(it) }.toList()
-      assertThat(responses).isEmpty()
-      assertEquals(Status.DEADLINE_EXCEEDED.code, (caught.getCompleted() as StatusException).status.code)
-    }
-  }
+//
+//  @Test
+//  fun clientStreaming() {
+//    val requests = Arrays.asList(
+//      StreamingInputCallRequest.newBuilder()
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(27182)))
+//        )
+//        .build(),
+//      StreamingInputCallRequest.newBuilder()
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(8)))
+//        )
+//        .build(),
+//      StreamingInputCallRequest.newBuilder()
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(1828)))
+//        )
+//        .build(),
+//      StreamingInputCallRequest.newBuilder()
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(45904)))
+//        )
+//        .build()
+//    )
+//    val goldenResponse = StreamingInputCallResponse.newBuilder()
+//      .setAggregatedPayloadSize(74922)
+//      .build()
+//    val response = runBlocking {
+//      stub.streamingInputCall(requests.asFlow())
+//    }
+//    assertEquals(goldenResponse, response)
+//  }
+//
+//  /**
+//   * Unsupported.
+//   */
+//  open fun clientCompressedStreaming(probe: Boolean) {
+//    val expectCompressedRequest = StreamingInputCallRequest.newBuilder()
+//      .setExpectCompressed(BoolValue.newBuilder().setValue(true))
+//      .setPayload(Payload.newBuilder().setBody(ByteString.copyFrom(ByteArray(27182))))
+//      .build()
+//
+//    if (probe) {
+//      runBlocking {
+//        val ex = assertFailsWith<StatusException> {
+//          // Send a non-compressed message with expectCompress=true. Servers supporting this test
+//          // case should return INVALID_ARGUMENT.
+//          stub.streamingInputCall(flowOf(expectCompressedRequest))
+//        }
+//        assertEquals(Status.INVALID_ARGUMENT.code, ex.status.code)
+//      }
+//    }
+//    // the Kotlin API doesn't expose control over compression
+//  }
+//
+//  /**
+//   * Tests server per-message compression in a streaming response. Ideally we would assert that the
+//   * responses have the requested compression, but this is not supported by the API. Given a
+//   * compliant server, this test will exercise the code path for receiving a compressed response but
+//   * cannot itself verify that the response was compressed.
+//   */
+//  fun serverCompressedStreaming() {
+//    val request = StreamingOutputCallRequest.newBuilder()
+//      .addResponseParameters(
+//        ResponseParameters.newBuilder()
+//          .setCompressed(BoolValue.newBuilder().setValue(true))
+//          .setSize(31415)
+//      )
+//      .addResponseParameters(
+//        ResponseParameters.newBuilder()
+//          .setCompressed(BoolValue.newBuilder().setValue(false))
+//          .setSize(92653)
+//      )
+//      .build()
+//    val goldenResponses = Arrays.asList(
+//      StreamingOutputCallResponse.newBuilder()
+//        .setPayload(Payload.newBuilder().setBody(ByteString.copyFrom(ByteArray(31415))))
+//        .build(),
+//      StreamingOutputCallResponse.newBuilder()
+//        .setPayload(Payload.newBuilder().setBody(ByteString.copyFrom(ByteArray(92653))))
+//        .build()
+//    )
+//    runBlocking {
+//      assertResponses(goldenResponses, stub.streamingOutputCall(request).toList())
+//    }
+//  }
+//
+//  @Test
+//  fun pingPong() {
+//    val requests = Arrays.asList(
+//      StreamingOutputCallRequest.newBuilder()
+//        .addResponseParameters(
+//          ResponseParameters.newBuilder()
+//            .setSize(31415)
+//        )
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(27182)))
+//        )
+//        .build(),
+//      StreamingOutputCallRequest.newBuilder()
+//        .addResponseParameters(
+//          ResponseParameters.newBuilder()
+//            .setSize(9)
+//        )
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(8)))
+//        )
+//        .build(),
+//      StreamingOutputCallRequest.newBuilder()
+//        .addResponseParameters(
+//          ResponseParameters.newBuilder()
+//            .setSize(2653)
+//        )
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(1828)))
+//        )
+//        .build(),
+//      StreamingOutputCallRequest.newBuilder()
+//        .addResponseParameters(
+//          ResponseParameters.newBuilder()
+//            .setSize(58979)
+//        )
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(45904)))
+//        )
+//        .build()
+//    )
+//    val goldenResponses = listOf(
+//      StreamingOutputCallResponse.newBuilder()
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(31415)))
+//        )
+//        .build(),
+//      StreamingOutputCallResponse.newBuilder()
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(9)))
+//        )
+//        .build(),
+//      StreamingOutputCallResponse.newBuilder()
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(2653)))
+//        )
+//        .build(),
+//      StreamingOutputCallResponse.newBuilder()
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(58979)))
+//        )
+//        .build()
+//    )
+//    runBlocking {
+//      // TODO: per-element timeout
+//      assertResponses(goldenResponses, stub.fullDuplexCall(requests.asFlow()).toList())
+//    }
+//  }
+//
+//  @Test
+//  fun emptyStream() {
+//    runBlocking {
+//      assertResponses(listOf(), stub.fullDuplexCall(flowOf()).toList())
+//    }
+//  }
+//
+//  @Test
+//  fun cancelAfterBegin() {
+//    class MyEx : Exception()
+//    runBlocking {
+//      assertFailsWith<MyEx> {
+//        stub.streamingInputCall(
+//          flow {
+//            throw MyEx()
+//          }
+//        )
+//      }
+//    }
+//  }
+//
+//  @Test
+//  fun cancelAfterFirstResponse() {
+//    val request = StreamingOutputCallRequest.newBuilder()
+//      .addResponseParameters(
+//        ResponseParameters.newBuilder()
+//          .setSize(31415)
+//      )
+//      .setPayload(
+//        Payload.newBuilder()
+//          .setBody(ByteString.copyFrom(ByteArray(27182)))
+//      )
+//      .build()
+//
+//    runBlocking {
+//      val ex = assertFailsWith<StatusException> {
+//        stub
+//          .fullDuplexCall(
+//            flow {
+//              emit(request)
+//              throw CancellationException()
+//            }
+//          )
+//          .collect()
+//      }
+//      assertThat(ex.status.code).isEqualTo(Status.Code.CANCELLED)
+//    }
+//    assertStatsTrace("grpc.testing.TestService/FullDuplexCall", Status.Code.CANCELLED)
+//  }
+//
+//  @Test
+//  fun fullDuplexCallShouldSucceed() { // Build the request.
+//    val responseSizes = listOf(50, 100, 150, 200)
+//    val streamingOutputBuilder = StreamingOutputCallRequest.newBuilder()
+//    for (size in responseSizes) {
+//      streamingOutputBuilder.addResponseParameters(
+//        ResponseParameters.newBuilder().setSize(size).setIntervalUs(0)
+//      )
+//    }
+//    val request = streamingOutputBuilder.build()
+//    val numRequests = 10
+//    val responses = runBlocking {
+//      stub.fullDuplexCall(
+//        (1..numRequests).asFlow().map { request }
+//      ).toList()
+//    }
+//    assertEquals(responseSizes.size * numRequests, responses.size)
+//    for ((ix, response) in responses.withIndex()) {
+//      val length = response.payload.body.size()
+//      val expectedSize = responseSizes[ix % responseSizes.size]
+//      assertEquals("comparison failed at index $ix", expectedSize.toLong(), length.toLong())
+//    }
+//    assertStatsTrace(
+//      "grpc.testing.TestService/FullDuplexCall",
+//      Status.Code.OK,
+//      List(numRequests) { request },
+//      responses
+//    )
+//  }
+//
+//  @Test
+//  fun halfDuplexCallShouldSucceed() { // Build the request.
+//    val responseSizes = listOf(50, 100, 150, 200)
+//    val streamingOutputBuilder = StreamingOutputCallRequest.newBuilder()
+//    for (size in responseSizes) {
+//      streamingOutputBuilder.addResponseParameters(
+//        ResponseParameters.newBuilder().setSize(size).setIntervalUs(0)
+//      )
+//    }
+//    val request = streamingOutputBuilder.build()
+//
+//    val numRequests = 10
+//    val responses = runBlocking {
+//      stub.halfDuplexCall((1..numRequests).asFlow().map { request }).toList()
+//    }
+//    assertEquals(responseSizes.size * numRequests, responses.size)
+//    for ((ix, response) in responses.withIndex()) {
+//      val length = response.payload.body.size()
+//      val expectedSize = responseSizes[ix % responseSizes.size]
+//      assertEquals("comparison failed at index $ix", expectedSize.toLong(), length.toLong())
+//    }
+//  }
+//
+//  @Test
+//  fun serverStreamingShouldBeFlowControlled() {
+//    val request = StreamingOutputCallRequest.newBuilder()
+//      .addResponseParameters(ResponseParameters.newBuilder().setSize(100000))
+//      .addResponseParameters(ResponseParameters.newBuilder().setSize(100001))
+//      .build()
+//    val goldenResponses = Arrays.asList(
+//      StreamingOutputCallResponse.newBuilder()
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(100000)))
+//        ).build(),
+//      StreamingOutputCallResponse.newBuilder()
+//        .setPayload(
+//          Payload.newBuilder()
+//            .setBody(ByteString.copyFrom(ByteArray(100001)))
+//        ).build()
+//    )
+//    val start = System.nanoTime()
+//
+//    // TODO(lowasser): change this to a Channel
+//    val queue = ArrayBlockingQueue<Any>(10)
+//    val call = channel.newCall(TestServiceGrpc.getStreamingOutputCallMethod(), CallOptions.DEFAULT)
+//    call.start(
+//      object : ClientCall.Listener<StreamingOutputCallResponse>() {
+//        override fun onHeaders(headers: Metadata) {}
+//        override fun onMessage(message: StreamingOutputCallResponse) {
+//          queue.add(message)
+//        }
+//
+//        override fun onClose(status: Status, trailers: Metadata) {
+//          queue.add(status)
+//        }
+//      },
+//      Metadata()
+//    )
+//    call.sendMessage(request)
+//    call.halfClose()
+//    // Time how long it takes to get the first response.
+//    call.request(1)
+//    var response = queue.poll(operationTimeoutMillis().toLong(), TimeUnit.MILLISECONDS)
+//    assertTrue(response is StreamingOutputCallResponse)
+//    assertResponse(goldenResponses[0], response as StreamingOutputCallResponse)
+//    val firstCallDuration = System.nanoTime() - start
+//    // Without giving additional flow control, make sure that we don't get another response. We wait
+//    // until we are comfortable the next message isn't coming. We may have very low nanoTime
+//    // resolution (like on Windows) or be using a testing, in-process transport where message
+//    // handling is instantaneous. In both cases, firstCallDuration may be 0, so round up sleep time
+//    // to at least 1ms.
+//    assertNull(
+//      queue.poll(max(firstCallDuration * 4, 1 * 1000 * 1000.toLong()), TimeUnit.NANOSECONDS)
+//    )
+//    // Make sure that everything still completes.
+//    call.request(1)
+//    response = queue.poll(operationTimeoutMillis().toLong(), TimeUnit.MILLISECONDS)
+//    assertTrue(response is StreamingOutputCallResponse)
+//    assertResponse(goldenResponses[1], response as StreamingOutputCallResponse)
+//    assertEquals(Status.OK, queue.poll(operationTimeoutMillis().toLong(), TimeUnit.MILLISECONDS))
+//  }
+//
+//  @Test
+//  fun veryLargeRequest() {
+//    assumeEnoughMemory()
+//    val request = SimpleRequest.newBuilder()
+//      .setPayload(
+//        Payload.newBuilder()
+//          .setBody(ByteString.copyFrom(ByteArray(unaryPayloadLength())))
+//      )
+//      .setResponseSize(10)
+//      .build()
+//    val goldenResponse = SimpleResponse.newBuilder()
+//      .setPayload(
+//        Payload.newBuilder()
+//          .setBody(ByteString.copyFrom(ByteArray(10)))
+//      )
+//      .build()
+//    runBlocking {
+//      assertResponse(goldenResponse, stub.unaryCall(request))
+//    }
+//  }
+//
+//  @Test
+//  fun veryLargeResponse() {
+//    assumeEnoughMemory()
+//    val request = SimpleRequest.newBuilder()
+//      .setResponseSize(unaryPayloadLength())
+//      .build()
+//    val goldenResponse = SimpleResponse.newBuilder()
+//      .setPayload(
+//        Payload.newBuilder()
+//          .setBody(ByteString.copyFrom(ByteArray(unaryPayloadLength())))
+//      )
+//      .build()
+//    runBlocking {
+//      assertResponse(goldenResponse, stub.unaryCall(request))
+//    }
+//  }
+//
+//  @Test
+//  fun exchangeMetadataUnaryCall() {
+//    // Capture the metadata exchange
+//    val fixedHeaders = Metadata()
+//    // Send a context proto (as it's in the default extension registry)
+//    val contextValue = SimpleContext.newBuilder().setValue("dog").build()
+//    fixedHeaders.put(Util.METADATA_KEY, contextValue)
+//    stub = MetadataUtils.attachHeaders(stub, fixedHeaders)
+//    // .. and expect it to be echoed back in trailers
+//    val trailersCapture = AtomicReference<Metadata>()
+//    val headersCapture = AtomicReference<Metadata>()
+//    stub = MetadataUtils.captureMetadata(stub, headersCapture, trailersCapture)
+//    runBlocking {
+//      assertNotNull(stub.emptyCall(EMPTY))
+//    }
+//    // Assert that our side channel object is echoed back in both headers and trailers
+//    assertEquals(contextValue, headersCapture.get().get(Util.METADATA_KEY))
+//    assertEquals(contextValue, trailersCapture.get().get(Util.METADATA_KEY))
+//  }
+//
+//  @Test
+//  fun exchangeMetadataStreamingCall() {
+//    // Capture the metadata exchange
+//    val fixedHeaders = Metadata()
+//    // Send a context proto (as it's in the default extension registry)
+//    val contextValue = SimpleContext.newBuilder().setValue("dog").build()
+//    fixedHeaders.put(Util.METADATA_KEY, contextValue)
+//    stub = MetadataUtils.attachHeaders(stub, fixedHeaders)
+//    // .. and expect it to be echoed back in trailers
+//    val trailersCapture = AtomicReference<Metadata>()
+//    val headersCapture = AtomicReference<Metadata>()
+//    stub = MetadataUtils.captureMetadata(stub, headersCapture, trailersCapture)
+//    val responseSizes = listOf(50, 100, 150, 200)
+//    val streamingOutputBuilder = StreamingOutputCallRequest.newBuilder()
+//    for (size in responseSizes) {
+//      streamingOutputBuilder.addResponseParameters(
+//        ResponseParameters.newBuilder().setSize(size).setIntervalUs(0)
+//      )
+//    }
+//    val request = streamingOutputBuilder.build()
+//
+//    val numRequests = 10
+//    val responses = runBlocking {
+//      stub.fullDuplexCall((1..numRequests).asFlow().map { request }).toList()
+//    }
+//    assertEquals(responseSizes.size * numRequests, responses.size)
+//    // Assert that our side channel object is echoed back in both headers and trailers
+//    assertEquals(contextValue, headersCapture.get().get(Util.METADATA_KEY))
+//    assertEquals(contextValue, trailersCapture.get().get(Util.METADATA_KEY))
+//  }
+//
+//  @Test
+//  fun deadlineNotExceeded() {
+//    runBlocking {
+//      // warm up the channel and JVM
+//      stub.emptyCall(EmptyProtos.Empty.getDefaultInstance())
+//      stub
+//        .withDeadlineAfter(10, TimeUnit.SECONDS)
+//        .streamingOutputCall(
+//          StreamingOutputCallRequest.newBuilder()
+//            .addResponseParameters(
+//              ResponseParameters.newBuilder()
+//                .setIntervalUs(0)
+//            )
+//            .build()
+//        )
+//        .first()
+//    }
+//  }
+//
+//  @Test
+//  fun deadlineExceeded() {
+//    runBlocking {
+//      // warm up the channel and JVM
+//      stub.emptyCall(EmptyProtos.Empty.getDefaultInstance())
+//      val request = StreamingOutputCallRequest.newBuilder()
+//        .addResponseParameters(
+//          ResponseParameters.newBuilder()
+//            .setIntervalUs(TimeUnit.SECONDS.toMicros(20).toInt())
+//        )
+//        .build()
+//      try {
+//        stub.withDeadlineAfter(100, TimeUnit.MILLISECONDS).streamingOutputCall(request).first()
+//        fail("Expected deadline to be exceeded")
+//      } catch (ex: StatusException) {
+//        assertEquals(Status.DEADLINE_EXCEEDED.code, ex.status.code)
+//        val desc = ex.status.description
+//        assertTrue(
+//          desc, // There is a race between client and server-side deadline expiration.
+//          // If client expires first, it'd generate this message
+//          Pattern.matches("deadline exceeded after .*s. \\[.*\\]", desc!!) ||
+//            // If server expires first, it'd reset the stream and client would generate a different
+//            // message
+//            desc.startsWith("ClientCall was cancelled at or after deadline.")
+//        )
+//      }
+//      assertStatsTrace("grpc.testing.TestService/EmptyCall", Status.Code.OK)
+//    }
+//  }
+//
+//  @Test
+//  fun deadlineExceededServerStreaming() {
+//    runBlocking {
+//      // warm up the channel and JVM
+//      stub.emptyCall(EmptyProtos.Empty.getDefaultInstance())
+//      val responseParameters = ResponseParameters.newBuilder()
+//        .setSize(1)
+//        .setIntervalUs(10000)
+//      val request = StreamingOutputCallRequest.newBuilder()
+//        .addResponseParameters(responseParameters)
+//        .addResponseParameters(responseParameters)
+//        .addResponseParameters(responseParameters)
+//        .addResponseParameters(responseParameters)
+//        .build()
+//      val statusEx = assertFailsWith<StatusException> {
+//        stub
+//          .withDeadlineAfter(30, TimeUnit.MILLISECONDS)
+//          .streamingOutputCall(request)
+//          .collect()
+//      }
+//      assertEquals(Status.DEADLINE_EXCEEDED.code, statusEx.status.code)
+//      assertStatsTrace("grpc.testing.TestService/EmptyCall", Status.Code.OK)
+//    }
+//  }
+//
+//  @Test
+//  fun deadlineInPast() { // Test once with idle channel and once with active channel
+//    runBlocking {
+//      try {
+//        stub
+//          .withDeadlineAfter(-10, TimeUnit.SECONDS)
+//          .emptyCall(EmptyProtos.Empty.getDefaultInstance())
+//        fail("Should have thrown")
+//      } catch (ex: StatusException) {
+//        assertEquals(Status.Code.DEADLINE_EXCEEDED, ex.status.code)
+//        assertThat(ex.status.description)
+//          .startsWith("ClientCall started after deadline exceeded")
+//      }
+//      // warm up the channel
+//      stub.emptyCall(EmptyProtos.Empty.getDefaultInstance())
+//      try {
+//        stub
+//          .withDeadlineAfter(-10, TimeUnit.SECONDS)
+//          .emptyCall(EmptyProtos.Empty.getDefaultInstance())
+//        fail("Should have thrown")
+//      } catch (ex: StatusException) {
+//        assertEquals(Status.Code.DEADLINE_EXCEEDED, ex.status.code)
+//        assertThat(ex.status.description)
+//          .startsWith("ClientCall started after deadline exceeded")
+//      }
+//      assertStatsTrace("grpc.testing.TestService/EmptyCall", Status.Code.OK)
+//    }
+//  }
+//
+//  protected fun unaryPayloadLength(): Int { // 10MiB.
+//    return 10485760
+//  }
+//
+//  @Test
+//  fun gracefulShutdown() {
+//    runBlocking {
+//      val requests = listOf(
+//        StreamingOutputCallRequest.newBuilder()
+//          .addResponseParameters(
+//            ResponseParameters.newBuilder()
+//              .setSize(3)
+//          )
+//          .setPayload(
+//            Payload.newBuilder()
+//              .setBody(ByteString.copyFrom(ByteArray(2)))
+//          )
+//          .build(),
+//        StreamingOutputCallRequest.newBuilder()
+//          .addResponseParameters(
+//            ResponseParameters.newBuilder()
+//              .setSize(1)
+//          )
+//          .setPayload(
+//            Payload.newBuilder()
+//              .setBody(ByteString.copyFrom(ByteArray(7)))
+//          )
+//          .build(),
+//        StreamingOutputCallRequest.newBuilder()
+//          .addResponseParameters(
+//            ResponseParameters.newBuilder()
+//              .setSize(4)
+//          )
+//          .setPayload(
+//            Payload.newBuilder()
+//              .setBody(ByteString.copyFrom(ByteArray(1)))
+//          )
+//          .build()
+//      )
+//      val goldenResponses = listOf(
+//        StreamingOutputCallResponse.newBuilder()
+//          .setPayload(
+//            Payload.newBuilder()
+//              .setBody(ByteString.copyFrom(ByteArray(3)))
+//          )
+//          .build(),
+//        StreamingOutputCallResponse.newBuilder()
+//          .setPayload(
+//            Payload.newBuilder()
+//              .setBody(ByteString.copyFrom(ByteArray(1)))
+//          )
+//          .build(),
+//        StreamingOutputCallResponse.newBuilder()
+//          .setPayload(
+//            Payload.newBuilder()
+//              .setBody(ByteString.copyFrom(ByteArray(4)))
+//          )
+//          .build()
+//      )
+//
+//      val requestChannel = kotlinx.coroutines.channels.Channel<StreamingOutputCallRequest>()
+//
+//      val responses = stub.fullDuplexCall(requestChannel.consumeAsFlow()).produceIn(this)
+//
+//      requestChannel.send(requests[0])
+//      assertResponse(goldenResponses[0], responses.receive())
+//      // Initiate graceful shutdown.
+//      channel.shutdown()
+//      requestChannel.send(requests[1])
+//      assertResponse(goldenResponses[1], responses.receive())
+//      // The previous ping-pong could have raced with the shutdown, but this one certainly shouldn't.
+//      requestChannel.send(requests[2])
+//      assertResponse(goldenResponses[2], responses.receive())
+//      assertFalse(responses.isClosedForReceive)
+//      requestChannel.close()
+//      assertThat(responses.toList()).isEmpty()
+//    }
+//  }
+//
+//  @Test
+//  fun customMetadata() {
+//    val responseSize = 314159
+//    val requestSize = 271828
+//    val request = SimpleRequest.newBuilder()
+//      .setResponseSize(responseSize)
+//      .setPayload(
+//        Payload.newBuilder()
+//          .setBody(ByteString.copyFrom(ByteArray(requestSize)))
+//      )
+//      .build()
+//    val streamingRequest = StreamingOutputCallRequest.newBuilder()
+//      .addResponseParameters(ResponseParameters.newBuilder().setSize(responseSize))
+//      .setPayload(Payload.newBuilder().setBody(ByteString.copyFrom(ByteArray(requestSize))))
+//      .build()
+//    val goldenResponse = SimpleResponse.newBuilder()
+//      .setPayload(
+//        Payload.newBuilder()
+//          .setBody(ByteString.copyFrom(ByteArray(responseSize)))
+//      )
+//      .build()
+//    val goldenStreamingResponse = StreamingOutputCallResponse.newBuilder()
+//      .setPayload(
+//        Payload.newBuilder()
+//          .setBody(ByteString.copyFrom(ByteArray(responseSize)))
+//      )
+//      .build()
+//    val trailingBytes =
+//      byteArrayOf(
+//        0xa.toByte(), 0xb.toByte(), 0xa.toByte(), 0xb.toByte(), 0xa.toByte(), 0xb.toByte()
+//      )
+//    // Test UnaryCall
+//    var metadata = Metadata()
+//    metadata.put(Util.ECHO_INITIAL_METADATA_KEY, "test_initial_metadata_value")
+//    metadata.put(Util.ECHO_TRAILING_METADATA_KEY, trailingBytes)
+//    var theStub = stub
+//    theStub = MetadataUtils.attachHeaders(theStub, metadata)
+//    var headersCapture = AtomicReference<Metadata>()
+//    var trailersCapture = AtomicReference<Metadata>()
+//    theStub = MetadataUtils.captureMetadata(theStub, headersCapture, trailersCapture)
+//    val response = runBlocking { theStub.unaryCall(request) }
+//    assertResponse(goldenResponse, response)
+//    assertEquals(
+//      "test_initial_metadata_value",
+//      headersCapture.get().get(Util.ECHO_INITIAL_METADATA_KEY)
+//    )
+//    assertTrue(
+//      Arrays.equals(trailingBytes, trailersCapture.get().get(Util.ECHO_TRAILING_METADATA_KEY))
+//    )
+//    assertStatsTrace(
+//      "grpc.testing.TestService/UnaryCall", Status.Code.OK, setOf(request), setOf(goldenResponse)
+//    )
+//    // Test FullDuplexCall
+//    metadata = Metadata()
+//    metadata.put(Util.ECHO_INITIAL_METADATA_KEY, "test_initial_metadata_value")
+//    metadata.put(Util.ECHO_TRAILING_METADATA_KEY, trailingBytes)
+//
+//    var theStreamingStub = stub
+//    theStreamingStub = MetadataUtils.attachHeaders(theStreamingStub, metadata)
+//    headersCapture = AtomicReference()
+//    trailersCapture = AtomicReference()
+//    theStreamingStub = MetadataUtils.captureMetadata(theStreamingStub, headersCapture, trailersCapture)
+//    runBlocking {
+//      assertResponse(goldenStreamingResponse, theStreamingStub.fullDuplexCall(flowOf(streamingRequest)).single())
+//    }
+//    assertEquals(
+//      "test_initial_metadata_value",
+//      headersCapture.get().get(Util.ECHO_INITIAL_METADATA_KEY)
+//    )
+//    assertTrue(
+//      Arrays.equals(trailingBytes, trailersCapture.get().get(Util.ECHO_TRAILING_METADATA_KEY))
+//    )
+//    assertStatsTrace(
+//      "grpc.testing.TestService/FullDuplexCall",
+//      Status.Code.OK,
+//      setOf(streamingRequest),
+//      setOf(goldenStreamingResponse)
+//    )
+//  }
+//
+//  @Test
+//  fun statusCodeAndMessage() {
+//    runBlocking {
+//      val errorCode = 2
+//      val errorMessage = "test status message"
+//      val responseStatus = EchoStatus.newBuilder()
+//        .setCode(errorCode)
+//        .setMessage(errorMessage)
+//        .build()
+//      val simpleRequest = SimpleRequest.newBuilder()
+//        .setResponseStatus(responseStatus)
+//        .build()
+//      val streamingRequest = StreamingOutputCallRequest.newBuilder()
+//        .setResponseStatus(responseStatus)
+//        .build()
+//      // Test UnaryCall
+//      try {
+//        stub.unaryCall(simpleRequest)
+//        fail()
+//      } catch (e: StatusException) {
+//        assertEquals(Status.UNKNOWN.code, e.status.code)
+//        assertEquals(errorMessage, e.status.description)
+//      }
+//      assertStatsTrace("grpc.testing.TestService/UnaryCall", Status.Code.UNKNOWN)
+//      // Test FullDuplexCall
+//      val status = assertFailsWith<StatusException> {
+//        stub.fullDuplexCall(flowOf(streamingRequest)).collect()
+//      }.status
+//      assertEquals(Status.UNKNOWN.code, status.code)
+//      assertEquals(errorMessage, status.description)
+//      assertStatsTrace("grpc.testing.TestService/FullDuplexCall", Status.Code.UNKNOWN)
+//    }
+//  }
+//
+//  @Test
+//  fun specialStatusMessage() {
+//    val errorCode = 2
+//    val errorMessage = "\t\ntest with whitespace\r\nand Unicode BMP ☺ and non-BMP 😈\t\n"
+//    val simpleRequest = SimpleRequest.newBuilder()
+//      .setResponseStatus(
+//        EchoStatus.newBuilder()
+//          .setCode(errorCode)
+//          .setMessage(errorMessage)
+//          .build()
+//      )
+//      .build()
+//    runBlocking {
+//      try {
+//        stub.unaryCall(simpleRequest)
+//        fail()
+//      } catch (e: StatusException) {
+//        assertEquals(Status.UNKNOWN.code, e.status.code)
+//        assertEquals(errorMessage, e.status.description)
+//      }
+//    }
+//    assertStatsTrace("grpc.testing.TestService/UnaryCall", Status.Code.UNKNOWN)
+//  }
+//
+//  /** Sends an rpc to an unimplemented method within TestService.  */
+//  @Test
+//  fun unimplementedMethod() {
+//    runBlocking {
+//      val ex = assertFailsWith<StatusException> {
+//        stub.unimplementedCall(EmptyProtos.Empty.getDefaultInstance())
+//      }
+//      assertEquals(Status.UNIMPLEMENTED.code, ex.status.code)
+//      assertClientStatsTrace(
+//        "grpc.testing.TestService/UnimplementedCall",
+//        Status.Code.UNIMPLEMENTED
+//      )
+//    }
+//  }
+//
+//  /** Sends an rpc to an unimplemented service on the server.  */
+//  @Test
+//  fun unimplementedService() {
+//    val stub =
+//      UnimplementedServiceGrpcKt.UnimplementedServiceCoroutineStub(channel)
+//        .withInterceptors(tracerSetupInterceptor)
+//    runBlocking {
+//      val ex = assertFailsWith<StatusException> {
+//        stub.unimplementedCall(EmptyProtos.Empty.getDefaultInstance())
+//      }
+//      assertEquals(Status.UNIMPLEMENTED.code, ex.status.code)
+//    }
+//    assertStatsTrace(
+//      "grpc.testing.UnimplementedService/UnimplementedCall",
+//      Status.Code.UNIMPLEMENTED
+//    )
+//  }
+//
+//  /** Start a fullDuplexCall which the server will not respond, and verify the deadline expires.  */
+//  @Test
+//  fun timeoutOnSleepingServer() {
+//    val stub = stub.withDeadlineAfter(1, TimeUnit.MILLISECONDS)
+//    val request = StreamingOutputCallRequest.newBuilder()
+//      .setPayload(
+//        Payload.newBuilder()
+//          .setBody(ByteString.copyFrom(ByteArray(27182)))
+//      )
+//      .build()
+//    runBlocking {
+//      val caught = CompletableDeferred<Throwable>()
+//      val responses = stub.fullDuplexCall(flowOf(request)).catch { caught.complete(it) }.toList()
+//      assertThat(responses).isEmpty()
+//      assertEquals(Status.DEADLINE_EXCEEDED.code, (caught.getCompleted() as StatusException).status.code)
+//    }
+//  }
 
   /**
    * Verifies remote server address and local client address are available from ClientCall
@@ -1337,7 +1338,7 @@ abstract class AbstractInteropTest {
   /** Sends an unary rpc with ComputeEngineChannelBuilder.  */
   fun computeEngineChannelCredentials(
     defaultServiceAccount: String,
-    computeEngineStub: TestServiceGrpcKt.TestServiceCoroutineStub
+    computeEngineStub: TestServiceGrpcKt.TestServiceArrowCoroutineStub
   ) = runBlocking {
     val request = SimpleRequest.newBuilder()
       .setFillUsername(true)
@@ -1413,7 +1414,7 @@ abstract class AbstractInteropTest {
   /** Sends an unary rpc with "google default credentials".  */
   fun googleDefaultCredentials(
     defaultServiceAccount: String,
-    googleDefaultStub: TestServiceGrpcKt.TestServiceCoroutineStub
+    googleDefaultStub: TestServiceGrpcKt.TestServiceArrowCoroutineStub
   ) = runBlocking {
     val request = SimpleRequest.newBuilder()
       .setFillUsername(true)

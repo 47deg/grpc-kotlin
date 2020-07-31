@@ -15,6 +15,9 @@
  */
 package io.grpc.testing.integration
 
+import arrow.fx.coroutines.milliseconds
+import arrow.fx.coroutines.stream.Stream
+import arrow.fx.coroutines.stream.compile
 import com.google.protobuf.ByteString
 import io.grpc.ForwardingServerCall
 import io.grpc.Metadata
@@ -22,14 +25,9 @@ import io.grpc.ServerCall
 import io.grpc.ServerCallHandler
 import io.grpc.ServerInterceptor
 import io.grpc.Status
-import java.util.Random
-import java.util.concurrent.Executor
-import java.util.concurrent.TimeUnit
-import kotlin.math.min
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.emitAll
@@ -38,6 +36,9 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.fold
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
+import java.util.*
+import java.util.concurrent.Executor
+import kotlin.math.min
 
 /**
  * Implementation of the business logic for the TestService. Uses an executor to schedule chunks
@@ -74,55 +75,59 @@ class TestServiceImpl(
 
   override fun streamingOutputCall(
     request: Messages.StreamingOutputCallRequest
-  ): Flow<Messages.StreamingOutputCallResponse> {
-    return flow {
+  ): Stream<Messages.StreamingOutputCallResponse> =
+    Stream.effect<Messages.StreamingOutputCallResponse> {
       var offset = 0
-      for (params in request.responseParametersList) {
-        delay(timeMillis = TimeUnit.MICROSECONDS.toMillis(params.intervalUs.toLong()))
-        emit(
-          Messages.StreamingOutputCallResponse
-            .newBuilder()
-            .apply {
-              payload = generatePayload(compressableBuffer, offset, params.size)
-            }
-            .build()
-        )
-        offset += params.size
-        offset %= compressableBuffer.size()
-      }
-    }
-  }
-
-  override suspend fun streamingInputCall(
-    requests: Flow<Messages.StreamingInputCallRequest>
-  ): Messages.StreamingInputCallResponse =
-    Messages.StreamingInputCallResponse
-      .newBuilder()
-      .apply {
-        aggregatedPayloadSize = requests.map { it.payload.body.size() }.sum()
-      }
-      .build()
-
-  override fun fullDuplexCall(
-    requests: Flow<Messages.StreamingOutputCallRequest>
-  ): Flow<Messages.StreamingOutputCallResponse> =
-    requests.flatMapConcat {
-      if (it.hasResponseStatus()) {
-        throw Status
-          .fromCodeValue(it.responseStatus.code)
-          .withDescription(it.responseStatus.message)
-          .asException()
-      }
-      streamingOutputCall(it)
+      request.responseParametersList.map { params ->
+        Stream.unit.delayBy(params.intervalUs.toLong().milliseconds)
+          .effectMap {
+            Messages.StreamingOutputCallResponse
+              .newBuilder()
+              .apply {
+                payload = generatePayload(compressableBuffer, offset, params.size)
+              }
+              .build()
+          }.map {
+            offset += params.size
+            offset %= compressableBuffer.size()
+            it
+            // FIXME
+          }.compile().lastOrError()
+        // FIXME
+      }.last()
     }
 
-  override fun halfDuplexCall(
-    requests: Flow<Messages.StreamingOutputCallRequest>
-  ): Flow<Messages.StreamingOutputCallResponse> =
-    flow {
-      val requestList = requests.toList()
-      emitAll(requestList.asFlow().flatMapConcat { streamingOutputCall(it) })
-    }
+
+//  override suspend fun streamingInputCall(
+//    requests: Flow<Messages.StreamingInputCallRequest>
+//  ): Messages.StreamingInputCallResponse =
+//    Messages.StreamingInputCallResponse
+//      .newBuilder()
+//      .apply {
+//        aggregatedPayloadSize = requests.map { it.payload.body.size() }.sum()
+//      }
+//      .build()
+//
+//  override fun fullDuplexCall(
+//    requests: Flow<Messages.StreamingOutputCallRequest>
+//  ): Flow<Messages.StreamingOutputCallResponse> =
+//    requests.flatMapConcat {
+//      if (it.hasResponseStatus()) {
+//        throw Status
+//          .fromCodeValue(it.responseStatus.code)
+//          .withDescription(it.responseStatus.message)
+//          .asException()
+//      }
+//      streamingOutputCall(it)
+//    }
+//
+//  override fun halfDuplexCall(
+//    requests: Flow<Messages.StreamingOutputCallRequest>
+//  ): Flow<Messages.StreamingOutputCallResponse> =
+//    flow {
+//      val requestList = requests.toList()
+//      emitAll(requestList.asFlow().flatMapConcat { streamingOutputCall(it) })
+//    }
 
   companion object {
     /** Returns interceptors necessary for full service implementation.  */
