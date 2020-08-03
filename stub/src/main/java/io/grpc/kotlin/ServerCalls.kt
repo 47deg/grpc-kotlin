@@ -204,7 +204,7 @@ object ServerCalls {
     call.sendHeaders(GrpcMetadata())
 
     val readiness = Readiness { call.isReady }
-    val requestsChannel: Queue<RequestT> = Environment(context).unsafeRunSync { Queue.bounded<RequestT>(1) }
+    val requestsChannel = Queue.unsafeBounded<RequestT>(1)
 
     val requestsStarted = AtomicBoolean(false) // enforces read-once
 
@@ -255,6 +255,7 @@ object ServerCalls {
       var isReceiving = true
 
       override fun onCancel() {
+        // FIXME: this isn't correct, how to trigger cancellation? rpcJob.interruptScope() ?
         rpcJob.handleErrorWith {
           raiseError(CancellationException("Cancellation received from client"))
         }
@@ -262,7 +263,6 @@ object ServerCalls {
 
       override fun onMessage(message: RequestT) {
         if (isReceiving) {
-          // TODO: Change effect when `tryOffer1` is added
           effect {
             if (!requestsChannel.tryOffer1(message)) {
               raiseError<StatusException>(Status.INTERNAL

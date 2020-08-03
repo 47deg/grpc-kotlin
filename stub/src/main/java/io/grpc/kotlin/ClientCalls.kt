@@ -271,18 +271,15 @@ object ClientCalls {
      * we request a response from the server, which only happens when responses is empty and
      * there is room in the buffer.
      */
-    val responses = Queue.bounded<ResponseT>(1)
+    val responses = Queue.unsafeBounded<ResponseT>(1)
     val readiness = Readiness { clientCall.isReady }
 
     clientCall.start(
       object : ClientCall.Listener<ResponseT>() {
         override fun onMessage(message: ResponseT) {
-          // TODO: Remove comments when `tryOffer1` is added
-//          if (!responses.tryOffer1(message)) {
-//            raiseError<AssertionError>(AssertionError("onMessage should never be called until responses is ready"))
-//              .compile()
-//              .drain()
-//          }
+          if (!responses.tryOffer1(message)) {
+            raiseError<AssertionError>(AssertionError("onMessage should never be called until responses is ready"))
+          }
         }
 
         override fun onClose(status: Status, trailersMetadata: GrpcMetadata) {
