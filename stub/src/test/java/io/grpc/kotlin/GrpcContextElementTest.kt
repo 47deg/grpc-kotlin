@@ -18,23 +18,22 @@ package io.grpc.kotlin
 
 import com.google.common.truth.Truth.assertThat
 import io.grpc.Context
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
-import java.util.concurrent.Executors
 
 @RunWith(JUnit4::class)
 class GrpcContextElementTest {
   val testKey = Context.key<String>("test")
 
+  // TODO: context propagation vs Scope ?
   @Test
   fun testContextPropagation() {
     val testGrpcContext = Context.ROOT.withValue(testKey, "testValue")
-    val coroutineContext =
-      Executors.newSingleThreadExecutor().asCoroutineDispatcher() + GrpcContextElement(testGrpcContext)
-    runBlocking(coroutineContext) {
+//    val coroutineContext =
+//      Executors.newSingleThreadExecutor().asCoroutineDispatcher() + GrpcContextElement(testGrpcContext)
+//    runBlocking(coroutineContext) {
+    runBlocking {
       val currentTestKey = testKey.get()
       // gets from the implicit current gRPC context
       assertThat(currentTestKey).isEqualTo("testValue")
