@@ -16,20 +16,19 @@
 
 package io.grpc.kotlin
 
-import arrow.fx.coroutines.Fiber
-import arrow.fx.coroutines.ForkConnected
-import arrow.fx.coroutines.stream.Stream
+import arrow.fx.coroutines.*
+import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+import arrow.fx.coroutines.stream.*
 import arrow.fx.coroutines.stream.Stream.Companion.effect
 import arrow.fx.coroutines.stream.Stream.Companion.emits
 import arrow.fx.coroutines.stream.Stream.Companion.raiseError
-import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
-import arrow.fx.coroutines.stream.flatten
-import arrow.fx.coroutines.stream.handleErrorWith
 import io.grpc.CallOptions
 import io.grpc.ClientCall
 import io.grpc.MethodDescriptor
 import io.grpc.Status
+import kotlin.coroutines.resumeWithException
 import io.grpc.Channel as GrpcChannel
 import io.grpc.Metadata as GrpcMetadata
 
@@ -278,17 +277,13 @@ object ClientCalls {
     clientCall.start(
       object : ClientCall.Listener<ResponseT>() {
         override fun onMessage(message: ResponseT) {
-          effect {
-            if (!responses.offer1(message)) {
-              raiseError<AssertionError>(AssertionError("onMessage should never be called until responses is ready"))
-                .compile()
-                .drain()
-            }
-          }.attempt()
+          if (!responses.tryOffer1(message)) {
+            throw AssertionError("onMessage should never be called until responses is ready")
+          }
         }
 
         override fun onClose(status: Status, trailersMetadata: GrpcMetadata) {
-          // responses.dequeue()
+          // responses.close()
         }
 
         override fun onReady() {
@@ -298,46 +293,40 @@ object ClientCalls {
       headers
     )
 
-    val sender: Fiber<Unit> = ForkConnected {
-      request.sendTo(clientCall, readiness)
-      clientCall.halfClose()
-    }/*.handleErrorWith { ex: Throwable ->
-      clientCall.cancel("Collection of requests completed exceptionally", ex)
-      raiseError(ex)
-    }.compile().drain()*/
 
-    // bufferBy ?
-    Stream.bracket({
-      ForkConnected {
+    val isFinished = Atomic(false)
+
+    val sender: Fiber<Unit> = ForkConnected {
+      try {
         request.sendTo(clientCall, readiness)
         clientCall.halfClose()
+      } catch (ex: Exception) {
+        clientCall.cancel("Collection of requests completed exceptionally", ex)
+        throw ex // propagate failure upward
       }
-    }, { sender ->
-      sender.cancel()
-      clientCall.cancel("Collection of responses completed exceptionally", error)
-    }).flatMap {
-      Stream.effect {
-        clientCall.request(1)
-        responses.dequeue().compile().lastOrError().let { response: ResponseT ->
-          clientCall.request(1)
-          Stream.emits(response).compile().lastOrError()
-        }
-      }
+
+      isFinished.set(true)
     }
 
-
-    effect {
+    Stream.effect {
       clientCall.request(1)
-      responses.dequeue().compile().lastOrError().let { response: ResponseT ->
-        clientCall.request(1)
-        Stream.emits(response).compile().lastOrError()
-      }
-    }.handleErrorWith { error: Throwable ->
-      // TODO: sender."cancelAndJoin"
-      // interrupt?
+    }.flatMap {
+      responses
+        .dequeue()
+        .effectTap { clientCall.request(1) }
+    }.handleErrorWith { e ->
+      Stream.effect {
+        uncancellable {
+          sender.cancel()
 
-      clientCall.cancel("Collection of responses completed exceptionally", error)
-      raiseError(Exception("Collection of responses completed exceptionally"))
-    }.compile().lastOrError()
-  }.scope()
+//          sender.join()
+//          sender.cancelAndJoin("Collection of responses completed exceptionally", e)
+
+          // we want sender to be done cancelling before we cancel clientCall, or it might try
+          // sending to a dead call, which results in ugly exception messages
+          clientCall.cancel("Collection of responses completed exceptionally", e)
+        }
+      }.flatMap { Stream.raiseError<ResponseT>(e) }
+    }.append { Stream.effect_ { if (!isFinished.get()) sender.cancel() } }
+  }.flatten()
 }

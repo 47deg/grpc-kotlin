@@ -21,7 +21,7 @@ import kotlinx.coroutines.channels.Channel
 /**
  * A simple helper allowing a notification of "ready" to be broadcast, and waited for.
  */
-internal class Readiness(
+internal class Readiness (
   private val isReallyReady: () -> Boolean
 ) {
   // A CONFLATED channel never suspends to send, and two notifications of readiness are equivalent
