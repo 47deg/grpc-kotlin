@@ -18,6 +18,9 @@ package io.grpc.kotlin
 
 import arrow.fx.coroutines.Environment
 import arrow.fx.coroutines.ForkConnected
+import arrow.fx.coroutines.stream.concurrent.Dequeue1
+import arrow.fx.coroutines.stream.concurrent.Enqueue
+import arrow.fx.coroutines.stream.concurrent.Queue
 import com.google.common.util.concurrent.MoreExecutors
 import io.grpc.BindableService
 import io.grpc.Context
@@ -63,16 +66,15 @@ abstract class AbstractCallsTest {
       GreeterGrpc.getBidiStreamSayHelloMethod()
     val greeterService: ServiceDescriptor = GreeterGrpc.getServiceDescriptor()
 
-//    fun <E> CoroutineScope.produce(
-//      block: suspend SendChannel<E>.() -> Unit
-//    ): ReceiveChannel<E> {
-//      val channel = Channel<E>()
-//      launch {
-//        channel.block()
-//        channel.close()
-//      }
-//      return channel
-//    }
+    suspend fun <E> produce(
+      block: suspend Enqueue<E>.() -> Unit
+    ): Queue<E> {
+      val queue = Queue.unbounded<E>()
+      ForkConnected {
+        queue.block()
+      }
+      return queue
+    }
 
     suspend fun suspendForever(): Nothing {
       suspendUntilCancelled {

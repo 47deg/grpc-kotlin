@@ -17,15 +17,9 @@
 package io.grpc.kotlin
 
 import arrow.fx.coroutines.Environment
-import arrow.fx.coroutines.guaranteeCase
 import arrow.fx.coroutines.ExitCase
-import arrow.fx.coroutines.Fiber
-import arrow.fx.coroutines.ForkConnected
+import arrow.fx.coroutines.guaranteeCase
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.Stream.Companion.effect
-import arrow.fx.coroutines.stream.Stream.Companion.just
-import arrow.fx.coroutines.stream.Stream.Companion.raiseError
-import arrow.fx.coroutines.stream.Stream.Companion.unit
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.handleErrorWith
@@ -79,7 +73,7 @@ object ServerCalls {
     return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
       requests
         .singleOrStatusStream("request", descriptor)
-        .flatMap { effect { implementation(it) } }
+        .flatMap { Stream.effect { implementation(it) } }
     }
   }
 
@@ -108,7 +102,7 @@ object ServerCalls {
       "Expected a client streaming method descriptor but got $descriptor"
     }
     return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
-      effect { implementation(requests) }
+      Stream.effect { implementation(requests) }
     }
   }
 
@@ -215,7 +209,7 @@ object ServerCalls {
 
     val requestsStarted = AtomicBoolean(false) // enforces read-once
 
-    val requests2 = Stream.effect {
+    val requests = Stream.effect {
       check(requestsStarted.compareAndSet(false, true)) {
         "requests flow can only be collected once"
       }
@@ -223,7 +217,7 @@ object ServerCalls {
       call.request(1)
     }.flatMap {
       requestsChannel
-        .dequeue() // For ever value we receive, we need to request the next one
+        .dequeue() // For every value we receive, we need to request the next one
         .effectTap { call.request(1) }
     }.handleErrorWith { e ->
       Stream.effect {
@@ -235,7 +229,7 @@ object ServerCalls {
     // Runs async cancellable on the provided context, always returns a new cancellable scope.
     val rpcCancelToken = Environment(context).unsafeRunAsyncCancellable {
       guaranteeCase({
-        implementation(requests2)
+        implementation(requests)
           .effectFold(Unit) { _, request ->
             readiness.suspendUntilReady()
             call.sendMessage(request)
@@ -255,21 +249,23 @@ object ServerCalls {
       var isReceiving = true
 
       override fun onCancel() {
+        println("onCancel")
         rpcCancelToken.invoke()
       }
 
       override fun onMessage(message: RequestT) {
         if (isReceiving) {
-//                    try {
+//        try {
+          println("onMessage: $message")
           if (!requestsChannel.tryOffer1(message)) {
             throw Status.INTERNAL
               .withDescription("onMessage should never be called when requestsChannel is unready")
               .asException()
           }
-//                    } catch (e: CancellationException) {
+//        } catch (e: CancellationException) {
           // we don't want any more client input; swallow it
-//                        isReceiving = false
-//                    }
+//            isReceiving = false
+//        }
         }
         if (!isReceiving) {
           call.request(1) // do not exert backpressure
@@ -278,10 +274,11 @@ object ServerCalls {
 
       override fun onHalfClose() {
         println("onHalfClose")
-//                requestsChannel.close()
+        // requestsChannel.close()
       }
 
       override fun onReady() {
+        println("onReady")
         readiness.onReady()
       }
     }
