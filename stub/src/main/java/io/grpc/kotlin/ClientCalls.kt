@@ -139,7 +139,7 @@ object ClientCalls {
       callOptions = callOptions,
       headers = headers,
       request = Request.Flowing(requests)
-    ).compile().lastOrError()
+    ).singleOrStatus("response", method)
   }
 
   /**

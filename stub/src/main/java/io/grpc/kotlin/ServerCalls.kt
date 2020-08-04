@@ -74,7 +74,11 @@ object ServerCalls {
     require(descriptor.type == UNARY) {
       "Expected a unary method descriptor but got $descriptor"
     }
-    return serverMethodDefinition(context, descriptor) { it.effectMap(implementation) }
+    return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
+      requests
+        .singleOrStatusStream("request", descriptor)
+        .flatMap { effect { implementation(it) } }
+    }
   }
 
   /**
@@ -190,7 +194,9 @@ object ServerCalls {
   ): ServerCallHandler<RequestT, ResponseT> =
     ServerCallHandler { call, _ ->
       serverCallListener(
-        context + GrpcContextElement.current(),
+        context
+          + CoroutineContextServerInterceptor.COROUTINE_CONTEXT_KEY.get()
+          + GrpcContextElement.current(),
         call,
         implementation
       )
@@ -224,41 +230,43 @@ object ServerCalls {
       raiseError(it)
     }
 
-    val rpcJob = Stream.bracket({
-      ForkConnected {
-        implementation(requests)
-          .compile()
-          .lastOrNull()?.let {
-            readiness.suspendUntilReady()
-            call.sendMessage(it)
-          }
+    Environment(context).unsafeRunSync {
+      Stream.bracket({
+        ForkConnected {
+          implementation(requests)
+            .compile()
+            .lastOrNull()?.let {
+              readiness.suspendUntilReady()
+              call.sendMessage(it)
+            }
 //          .foldChunks(Unit) { _, chunkResponseT: Chunk<ResponseT> ->
 //            readiness.suspendUntilReady()
 //            call.sendMessage(chunkResponseT.firstOrNull())
 //          }
-      }
-    }, { fiber: Fiber<Unit?> ->
-      fiber.cancel()
-      val failure: Throwable? = Throwable("FIXME")
-      //val failure = cause ?: rpcJob.doneValue
-      val closeStatus = when (failure) {
-        null -> Status.OK
-        // TODO how is it thrown the CancellationException?
-        is CancellationException -> Status.CANCELLED.withCause(failure)
-        else -> Status.fromThrowable(failure)
-      }
-      val trailers = failure?.let { Status.trailersFromThrowable(it) } ?: GrpcMetadata()
-      call.close(closeStatus, trailers)
-    })
+        }
+      }, { fiber: Fiber<Unit?> ->
+        fiber.cancel()
+        val failure: Throwable? = Throwable("FIXME")
+        //val failure = cause ?: rpcJob.doneValue
+        val closeStatus = when (failure) {
+          null -> Status.OK
+          // TODO how is it thrown the CancellationException?
+          is CancellationException -> Status.CANCELLED.withCause(failure)
+          else -> Status.fromThrowable(failure)
+        }
+        val trailers = failure?.let { Status.trailersFromThrowable(it) } ?: GrpcMetadata()
+        call.close(closeStatus, trailers)
+      }).compile().drain()
+    }
 
     return object : ServerCall.Listener<RequestT>() {
       var isReceiving = true
 
       override fun onCancel() {
         // FIXME: this isn't correct, how to trigger cancellation? rpcJob.interruptScope() ?
-        rpcJob.handleErrorWith {
-          raiseError(CancellationException("Cancellation received from client"))
-        }
+//        rpcJob.handleErrorWith {
+//          raiseError(CancellationException("Cancellation received from client"))
+//        }
       }
 
       override fun onMessage(message: RequestT) {
@@ -285,6 +293,7 @@ object ServerCalls {
       }
 
       override fun onHalfClose() {
+        println("onHalfClose")
       }
 
       override fun onReady() {

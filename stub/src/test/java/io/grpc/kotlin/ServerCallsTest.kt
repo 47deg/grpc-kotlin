@@ -26,7 +26,6 @@ import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
 import com.google.common.truth.Truth.assertThat
-import com.google.common.truth.extensions.proto.ProtoTruth.assertThat
 import io.grpc.CallOptions
 import io.grpc.ClientCall
 import io.grpc.Context
@@ -111,7 +110,7 @@ class ServerCallsTest : AbstractCallsTest() {
     clientCall.request(1)
     processingStarted.join()
     assertThat(response.get()).isEqualTo(helloReply("Hello!"))
-    Stream.unit.delayBy(200.milliseconds) //delay(200)?
+    Stream.unit.delayBy(200.milliseconds).compile().drain() //delay(200)?
     assertThat(closeStatus.tryGet()).isNull()
     clientCall.halfClose()
     assertThat(closeStatus.get().code).isEqualTo(Status.Code.OK)
@@ -218,9 +217,7 @@ class ServerCallsTest : AbstractCallsTest() {
   fun unaryMethodThrowsException() = runBlocking {
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
-        Stream.raiseError<HelloReply>(MyException())
-          .compile()
-          .lastOrError()
+        throw MyException()
       }
     )
 
@@ -727,7 +724,7 @@ class ServerCallsTest : AbstractCallsTest() {
           val thirdSend = ForkConnected {
             queue.enqueue1(helloReply("3rd"))
           }
-          Stream.unit.delayBy(200.milliseconds) // ?
+          Stream.unit.delayBy(200.milliseconds).compile().drain() // ?
           // assertThat(thirdSend.isCompleted).isFalse() how to check state
           receiveFirstMessage.cancel()
           receivedFirstMessage.join()
