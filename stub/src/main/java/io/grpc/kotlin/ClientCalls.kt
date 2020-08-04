@@ -21,7 +21,6 @@ import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import arrow.fx.coroutines.stream.*
 import arrow.fx.coroutines.stream.Stream.Companion.effect
-import arrow.fx.coroutines.stream.Stream.Companion.emits
 import arrow.fx.coroutines.stream.Stream.Companion.raiseError
 import arrow.fx.coroutines.stream.concurrent.Queue
 import io.grpc.CallOptions
@@ -107,7 +106,7 @@ object ClientCalls {
     callOptions: CallOptions = CallOptions.DEFAULT,
     headers: suspend () -> GrpcMetadata = { GrpcMetadata() }
   ): (RequestT) -> Stream<ResponseT> = { request ->
-    Stream.effect {
+    effect {
       serverStreamingRpc(
         channel,
         method,
@@ -139,7 +138,7 @@ object ClientCalls {
       callOptions = callOptions,
       headers = headers,
       request = Request.Flowing(requests)
-    ).compile().lastOrError()
+    ).singleOrStatus("response", method)
   }
 
   /**
@@ -271,7 +270,7 @@ object ClientCalls {
      * we request a response from the server, which only happens when responses is empty and
      * there is room in the buffer.
      */
-    val responses = Queue.bounded<ResponseT>(1)
+    val responses = Queue.unsafeBounded<ResponseT>(1)
     val readiness = Readiness { clientCall.isReady }
 
     clientCall.start(

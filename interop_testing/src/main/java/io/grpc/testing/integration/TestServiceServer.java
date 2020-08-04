@@ -135,7 +135,7 @@ public class TestServiceServer {
           AltsServerBuilder.forPort(port)
               .addService(
                   ServerInterceptors.intercept(
-                      new TestServiceImpl(executor), TestServiceImpl.interceptors()))
+                      new TestServiceImpl(), TestServiceImpl.interceptors()))
               .build()
               .start();
     } else {
@@ -151,7 +151,7 @@ public class TestServiceServer {
               .maxInboundMessageSize(AbstractInteropTest.MAX_MESSAGE_SIZE)
               .addService(
                   ServerInterceptors.intercept(
-                      new TestServiceImpl(executor), TestServiceImpl.interceptors()))
+                      new TestServiceImpl(), TestServiceImpl.interceptors()))
               .build()
               .start();
     }

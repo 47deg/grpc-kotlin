@@ -24,7 +24,7 @@ import io.grpc.Context as GrpcContext
  * A [CoroutineContext] that propagates an associated [io.grpc.Context] to coroutines run using
  * that context, regardless of thread.
  */
-
+// TODO: as of now there is no replacement of ThreadContextElement, pending to be added
 class GrpcContextElement(private val grpcContext: GrpcContext) : ThreadContextElement<GrpcContext> {
   companion object Key : CoroutineContext.Key<GrpcContextElement> {
     fun current(): GrpcContextElement = GrpcContextElement(GrpcContext.current())

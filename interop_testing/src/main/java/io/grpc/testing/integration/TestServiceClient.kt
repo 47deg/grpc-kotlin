@@ -28,10 +28,8 @@ import io.grpc.netty.NegotiationType
 import io.grpc.netty.NettyChannelBuilder
 import io.grpc.okhttp.OkHttpChannelBuilder
 import io.grpc.okhttp.internal.Platform
-import io.grpc.testing.integration.TestServiceGrpcKt.TestServiceCoroutineStub
+import io.grpc.testing.integration.TestServiceGrpcKt.TestServiceArrowCoroutineStub
 import io.netty.handler.ssl.SslContext
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.FlowPreview
 import java.io.File
 import java.io.FileInputStream
 import java.util.concurrent.TimeUnit
@@ -41,8 +39,6 @@ import kotlin.system.exitProcess
  * Application that starts a client for the [TestServiceGrpc.TestServiceImplBase] and runs
  * through a series of tests.
  */
-@ExperimentalCoroutinesApi
-@FlowPreview
 class TestServiceClient {
   private var serverHost = "localhost"
   private var serverHostOverride: String? = null
@@ -63,7 +59,7 @@ class TestServiceClient {
   @VisibleForTesting
   fun parseArgs(args: Array<String>) {
     var usage = false
-    argsLoop@for (arg in args) {
+    argsLoop@ for (arg in args) {
       if (!arg.startsWith("--")) {
         System.err.println("All arguments must start with '--': $arg")
         usage = true
@@ -182,7 +178,7 @@ class TestServiceClient {
         try {
           tester.computeEngineChannelCredentials(
             defaultServiceAccount,
-            TestServiceCoroutineStub(channel)
+            TestServiceArrowCoroutineStub(channel)
           )
         } finally {
           channel.shutdownNow()
@@ -211,7 +207,7 @@ class TestServiceClient {
       TestCases.GOOGLE_DEFAULT_CREDENTIALS -> {
         val channel = GoogleDefaultChannelBuilder.forAddress(serverHost, serverPort).build()
         try {
-          val googleDefaultStub = TestServiceCoroutineStub(channel)
+          val googleDefaultStub = TestServiceArrowCoroutineStub(channel)
           tester.googleDefaultCredentials(defaultServiceAccount, googleDefaultStub)
         } finally {
           channel.shutdownNow()

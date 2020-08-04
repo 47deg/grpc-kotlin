@@ -4,7 +4,7 @@ import com.google.common.truth.Truth.assertThat
 import io.grpc.ServerCall
 import io.grpc.ServerInterceptors
 import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterCoroutineImplBase
-import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterCoroutineStub
+import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterArrowCoroutineStub
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
 import org.junit.Test
@@ -43,7 +43,7 @@ class CoroutineContextServerInterceptorTest : AbstractCallsTest() {
     }
 
     val channel = makeChannel(HelloReplyWithContextMessage(), interceptor)
-    val client = GreeterCoroutineStub(channel)
+    val client = GreeterArrowCoroutineStub(channel)
 
     runBlocking {
       assertThat(client.sayHello(helloRequest("")).message).isEqualTo("success")
@@ -74,7 +74,7 @@ class CoroutineContextServerInterceptorTest : AbstractCallsTest() {
         interceptor1
       )
     )
-    val client = GreeterCoroutineStub(channel)
+    val client = GreeterArrowCoroutineStub(channel)
 
     runBlocking {
       assertThat(client.sayHello(helloRequest("")).message).isEqualTo("second")
@@ -91,7 +91,7 @@ class CoroutineContextServerInterceptorTest : AbstractCallsTest() {
     }
 
     val channel = makeChannel(HelloReplyWithContextMessage("server"), interceptor)
-    val client = GreeterCoroutineStub(channel)
+    val client = GreeterArrowCoroutineStub(channel)
 
     runBlocking {
       assertThat(client.sayHello(helloRequest("")).message).isEqualTo("interceptor")

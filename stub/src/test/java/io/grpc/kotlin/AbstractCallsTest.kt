@@ -16,6 +16,8 @@
 
 package io.grpc.kotlin
 
+import arrow.fx.coroutines.Environment
+import arrow.fx.coroutines.ForkConnected
 import com.google.common.util.concurrent.MoreExecutors
 import io.grpc.BindableService
 import io.grpc.Context
@@ -35,22 +37,14 @@ import io.grpc.examples.helloworld.MultiHelloRequest
 import io.grpc.inprocess.InProcessChannelBuilder
 import io.grpc.inprocess.InProcessServerBuilder
 import io.grpc.testing.GrpcCleanupRule
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
-import kotlin.coroutines.CoroutineContext
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.ReceiveChannel
-import kotlinx.coroutines.channels.SendChannel
-import kotlinx.coroutines.debug.junit4.CoroutinesTimeout
-import kotlinx.coroutines.launch
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
+import java.util.concurrent.CancellationException
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.EmptyCoroutineContext
 
 abstract class AbstractCallsTest {
   companion object {
@@ -69,16 +63,16 @@ abstract class AbstractCallsTest {
       GreeterGrpc.getBidiStreamSayHelloMethod()
     val greeterService: ServiceDescriptor = GreeterGrpc.getServiceDescriptor()
 
-    fun <E> CoroutineScope.produce(
-      block: suspend SendChannel<E>.() -> Unit
-    ): ReceiveChannel<E> {
-      val channel = Channel<E>()
-      launch {
-        channel.block()
-        channel.close()
-      }
-      return channel
-    }
+//    fun <E> CoroutineScope.produce(
+//      block: suspend SendChannel<E>.() -> Unit
+//    ): ReceiveChannel<E> {
+//      val channel = Channel<E>()
+//      launch {
+//        channel.block()
+//        channel.close()
+//      }
+//      return channel
+//    }
 
     suspend fun suspendForever(): Nothing {
       suspendUntilCancelled {
@@ -86,8 +80,8 @@ abstract class AbstractCallsTest {
       }
     }
 
-    suspend fun suspendUntilCancelled(onCancelled: (CancellationException) -> Unit): Nothing {
-      val deferred = Job()
+    suspend fun suspendUntilCancelled(onCancelled: suspend (CancellationException) -> Unit): Nothing {
+      val deferred = ForkConnected { }
       try {
         deferred.join()
       } catch (c: CancellationException) {
@@ -97,16 +91,16 @@ abstract class AbstractCallsTest {
       throw AssertionError("Unreachable")
     }
 
-    fun whenContextIsCancelled(onCancelled: () -> Unit) {
+    fun whenContextIsCancelled(onCancelled: suspend () -> Unit) {
       Context.current().withCancellation().addListener(
-        Context.CancellationListener { onCancelled() },
+        Context.CancellationListener { suspend { onCancelled() } },
         MoreExecutors.directExecutor()
       )
     }
   }
 
-  @get:Rule
-  val timeout = CoroutinesTimeout.seconds(10)
+//  @get:Rule
+//  val timeout = CoroutinesTimeout.seconds(10)
 
   // We want the coroutines timeout to come first, because it comes with useful debug logs.
   @get:Rule
@@ -115,9 +109,6 @@ abstract class AbstractCallsTest {
   lateinit var channel: ManagedChannel
 
   private lateinit var executor: ExecutorService
-
-  private val context: CoroutineContext
-    get() = executor.asCoroutineDispatcher()
 
   @Before
   fun setUp() {
@@ -187,10 +178,9 @@ abstract class AbstractCallsTest {
     }
     return makeChannel(ServerInterceptors.intercept(builder.build(), *interceptors))
   }
+}
 
-  fun <R> runBlocking(block: suspend CoroutineScope.() -> R): Unit =
-    kotlinx.coroutines.runBlocking(context) {
-      block()
-      Unit
-    }
+fun <R> runBlocking(block: suspend () -> R): Unit = Environment(EmptyCoroutineContext).unsafeRunSync {
+  block()
+  Unit
 }

@@ -16,7 +16,7 @@
 
 package io.grpc.kotlin
 
-import kotlinx.coroutines.channels.Channel
+import arrow.fx.coroutines.stream.concurrent.Queue
 
 /**
  * A simple helper allowing a notification of "ready" to be broadcast, and waited for.
@@ -26,10 +26,22 @@ internal class Readiness (
 ) {
   // A CONFLATED channel never suspends to send, and two notifications of readiness are equivalent
   // to one
-  private val channel = Channel<Unit>(Channel.CONFLATED)
+  /**
+   * are these equivalent? unsafeBounded(1)[Strategy.boundedFifo] and Channel<Unit>(Channel.CONFLATED)
+   * Channel.CONFLATED: Channel that buffers at most one element and conflates all subsequent `send` and `offer` invocations,
+   * so that the receiver always gets the most recently sent element.
+   * Back-to-send sent elements are _conflated_ -- only the the most recently sent element is received,
+   * while previously sent elements **are lost**.
+   * Sender to this channel never suspends and [offer] always returns `true`.
+   *
+   * This channel is created by `Channel(Channel.CONFLATED)` factory function invocation.
+   *
+   * This implementation is fully lock-free.
+   */
+  private val channel = Queue.unsafeBounded<Unit>(1)
 
   fun onReady() {
-    if (!channel.offer(Unit)) {
+    if (!channel.tryOffer1(Unit)) {
       throw AssertionError(
         "Should be impossible; a CONFLATED channel should never return false on offer"
       )
@@ -38,7 +50,7 @@ internal class Readiness (
 
   suspend fun suspendUntilReady() {
     while (!isReallyReady()) {
-      channel.receive()
+      channel.dequeue()
     }
   }
 }
