@@ -32,7 +32,6 @@ import io.grpc.ServerCallHandler
 import io.grpc.ServerMethodDefinition
 import io.grpc.Status
 import io.grpc.StatusException
-import kotlinx.coroutines.CoroutineScope
 import java.util.concurrent.CancellationException
 import kotlin.coroutines.CoroutineContext
 import io.grpc.Metadata as GrpcMetadata

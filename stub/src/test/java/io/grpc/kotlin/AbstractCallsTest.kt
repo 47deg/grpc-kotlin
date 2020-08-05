@@ -18,7 +18,7 @@ package io.grpc.kotlin
 
 import arrow.fx.coroutines.Environment
 import arrow.fx.coroutines.ForkConnected
-import arrow.fx.coroutines.stream.concurrent.Dequeue1
+import arrow.fx.coroutines.IOPool
 import arrow.fx.coroutines.stream.concurrent.Enqueue
 import arrow.fx.coroutines.stream.concurrent.Queue
 import com.google.common.util.concurrent.MoreExecutors
@@ -47,7 +47,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.CoroutineContext
 
 abstract class AbstractCallsTest {
   companion object {
@@ -111,6 +111,10 @@ abstract class AbstractCallsTest {
   lateinit var channel: ManagedChannel
 
   private lateinit var executor: ExecutorService
+
+  private val context: CoroutineContext
+    //get() = TestCoroutineContext()
+    get() = IOPool
 
   @Before
   fun setUp() {
@@ -180,9 +184,9 @@ abstract class AbstractCallsTest {
     }
     return makeChannel(ServerInterceptors.intercept(builder.build(), *interceptors))
   }
-}
 
-fun <R> runBlocking(block: suspend () -> R): Unit = Environment(EmptyCoroutineContext).unsafeRunSync {
-  block()
-  Unit
+  fun <R> runBlocking(block: suspend () -> R): Unit = Environment(context).unsafeRunSync {
+    block()
+    Unit
+  }
 }
