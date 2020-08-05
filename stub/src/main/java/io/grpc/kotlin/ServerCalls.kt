@@ -16,13 +16,12 @@
 
 package io.grpc.kotlin
 
+import arrow.core.Either
 import arrow.fx.coroutines.Environment
 import arrow.fx.coroutines.ExitCase
-import arrow.fx.coroutines.guaranteeCase
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
-import arrow.fx.coroutines.stream.handleErrorWith
 import io.grpc.MethodDescriptor
 import io.grpc.MethodDescriptor.MethodType.BIDI_STREAMING
 import io.grpc.MethodDescriptor.MethodType.CLIENT_STREAMING
@@ -35,7 +34,6 @@ import io.grpc.Status
 import io.grpc.StatusException
 import kotlinx.coroutines.CoroutineScope
 import java.util.concurrent.CancellationException
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
 import io.grpc.Metadata as GrpcMetadata
 
@@ -207,73 +205,69 @@ object ServerCalls {
     val readiness = Readiness { call.isReady }
     val requestsChannel = Queue.unsafeBounded<RequestT>(1)
 
-    val requestsStarted = AtomicBoolean(false) // enforces read-once
+    // We complete this latch when processing requests fails, or when we halfClose.
+    // Check `isEmpty` to check if we're still taking requests.
+    val isActive = UnsafePromise<Unit>()
 
-    val requests = Stream.effect {
-      check(requestsStarted.compareAndSet(false, true)) {
-        "requests flow can only be collected once"
-      }
-
-      call.request(1)
-    }.flatMap {
-      requestsChannel
-        .dequeue() // For every value we receive, we need to request the next one
-        .effectTap { call.request(1) }
-    }.handleErrorWith { e ->
-      Stream.effect {
-//            requestsChannel.cancel(CancellationException("Exception thrown while collecting requests", e))
-        call.request(1) // make sure we don't cause backpressure
-      }.flatMap { Stream.raiseError<RequestT>(e) }
-    }
+    val requests = // TODO should we request messages in `Chunks` ???
+      Stream.effect { call.request(1) } // Request first message
+        .flatMap {
+          requestsChannel
+            .dequeue() // For every value we receive, we need to request the next one
+            .interruptWhen { Either.Right(isActive.join()) }
+            .effectTap { call.request(1) }
+        }.onFinalizeCase { ex ->
+          when (ex) {
+            is ExitCase.Failure -> {
+              isActive.complete(Result.success(Unit)) // Signal that we've stopped taking requests
+              call.request(1) // make sure we don't cause backpressure
+            }
+            else -> Unit
+          }
+        }
 
     // Runs async cancellable on the provided context, always returns a new cancellable scope.
     val rpcCancelToken = Environment(context).unsafeRunAsyncCancellable {
-      guaranteeCase({
-        implementation(requests)
-          .effectFold(Unit) { _, request ->
-            readiness.suspendUntilReady()
-            call.sendMessage(request)
-          }
-          .compile()
-          .drain()
-      }) { case: ExitCase ->
-        when (case) {
-          ExitCase.Completed -> call.close(Status.OK, GrpcMetadata())
-          ExitCase.Cancelled -> call.close(Status.CANCELLED, GrpcMetadata())
-          is ExitCase.Failure -> call.close(Status.fromThrowable(case.failure), Status.trailersFromThrowable(case.failure))
+      implementation(requests)
+        .effectFold(Unit) { _, request ->
+          readiness.suspendUntilReady()
+          call.sendMessage(request)
         }
-      }
+        .onFinalizeCase { case ->
+          when (case) {
+            ExitCase.Completed -> call.close(Status.OK, GrpcMetadata())
+            ExitCase.Cancelled -> call.close(Status.CANCELLED, GrpcMetadata())
+            is ExitCase.Failure -> call.close(Status.fromThrowable(case.failure), Status.trailersFromThrowable(case.failure))
+          }
+        }
+        .compile()
+        .drain()
     }
 
     return object : ServerCall.Listener<RequestT>() {
-      var isReceiving = true
-
       override fun onCancel() {
         println("onCancel")
         rpcCancelToken.invoke()
       }
 
       override fun onMessage(message: RequestT) {
-        if (isReceiving) {
-//        try {
+        if (isActive.isEmpty()) {
           println("onMessage: $message")
           if (!requestsChannel.tryOffer1(message)) {
             throw Status.INTERNAL
               .withDescription("onMessage should never be called when requestsChannel is unready")
               .asException()
           }
-//        } catch (e: CancellationException) {
-          // we don't want any more client input; swallow it
-//            isReceiving = false
-//        }
         }
-        if (!isReceiving) {
+
+        if (!isActive.isEmpty()) {
           call.request(1) // do not exert backpressure
         }
       }
 
       override fun onHalfClose() {
         println("onHalfClose")
+        isActive.complete(Result.success(Unit))
         // requestsChannel.close()
       }
 

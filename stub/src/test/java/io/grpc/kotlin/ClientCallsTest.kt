@@ -35,6 +35,7 @@ import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
 import io.grpc.examples.helloworld.MultiHelloRequest
 import io.grpc.stub.StreamObserver
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
@@ -43,6 +44,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.EmptyCoroutineContext
 
+@Ignore
 /** Tests for [ClientCalls]. */
 @RunWith(JUnit4::class)
 class ClientCallsTest : AbstractCallsTest() {

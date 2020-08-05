@@ -31,12 +31,14 @@ import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterCoroutineImplBase
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
 import io.grpc.examples.helloworld.MultiHelloRequest
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 
+@Ignore
 @RunWith(JUnit4::class)
 class GeneratedCodeTest : AbstractCallsTest() {
   @Test

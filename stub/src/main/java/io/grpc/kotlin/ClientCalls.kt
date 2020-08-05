@@ -16,18 +16,16 @@
 
 package io.grpc.kotlin
 
-import arrow.fx.coroutines.*
-import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
-import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
-import arrow.fx.coroutines.stream.*
+import arrow.core.Either
+import arrow.fx.coroutines.ExitCase
+import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
-import arrow.fx.coroutines.stream.Stream.Companion.raiseError
 import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.flatten
 import io.grpc.CallOptions
 import io.grpc.ClientCall
 import io.grpc.MethodDescriptor
 import io.grpc.Status
-import kotlin.coroutines.resumeWithException
 import io.grpc.Channel as GrpcChannel
 import io.grpc.Metadata as GrpcMetadata
 
@@ -273,6 +271,8 @@ object ClientCalls {
     val responses = Queue.unsafeBounded<ResponseT>(1)
     val readiness = Readiness { clientCall.isReady }
 
+    val latch = UnsafePromise<Unit>()
+
     clientCall.start(
       object : ClientCall.Listener<ResponseT>() {
         override fun onMessage(message: ResponseT) {
@@ -282,7 +282,7 @@ object ClientCalls {
         }
 
         override fun onClose(status: Status, trailersMetadata: GrpcMetadata) {
-          // responses.close()
+          latch.complete(Result.success(Unit))
         }
 
         override fun onReady() {
@@ -292,40 +292,23 @@ object ClientCalls {
       headers
     )
 
-
-    val isFinished = Atomic(false)
-
-    val sender: Fiber<Unit> = ForkConnected {
-      try {
-        request.sendTo(clientCall, readiness)
-        clientCall.halfClose()
-      } catch (ex: Exception) {
-        clientCall.cancel("Collection of requests completed exceptionally", ex)
-        throw ex // propagate failure upward
-      }
-
-      isFinished.set(true)
-    }
-
-    Stream.effect {
+    effect {
       clientCall.request(1)
     }.flatMap {
       responses
         .dequeue()
+        // Close stream when latch is completed
+        .interruptWhen { Either.Right(latch.join()) }
         .effectTap { clientCall.request(1) }
-    }.handleErrorWith { e ->
-      Stream.effect {
-        uncancellable {
-          sender.cancel()
-
-//          sender.join()
-//          sender.cancelAndJoin("Collection of responses completed exceptionally", e)
-
-          // we want sender to be done cancelling before we cancel clientCall, or it might try
-          // sending to a dead call, which results in ugly exception messages
-          clientCall.cancel("Collection of responses completed exceptionally", e)
-        }
-      }.flatMap { Stream.raiseError<ResponseT>(e) }
-    }.append { Stream.effect_ { if (!isFinished.get()) sender.cancel() } }
+    }.concurrently(effect {
+      request.sendTo(clientCall, readiness)
+      clientCall.halfClose()
+    }).onFinalizeCase { ex ->
+      when (ex) {
+        is ExitCase.Cancelled -> clientCall.cancel("Collection of requests was cancelled", null)
+        is ExitCase.Failure -> clientCall.cancel("Collection of requests completed exceptionally", ex.failure)
+        else -> Unit
+      }
+    }
   }.flatten()
 }

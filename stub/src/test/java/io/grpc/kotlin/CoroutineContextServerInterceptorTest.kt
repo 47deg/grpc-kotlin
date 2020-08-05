@@ -7,6 +7,7 @@ import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterCoroutineImplBase
 import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterArrowCoroutineStub
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
@@ -15,6 +16,7 @@ import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.coroutineContext
 import io.grpc.Metadata as GrpcMetadata
 
+@Ignore
 /** Tests for [CoroutineContextServerInterceptor]. */
 @RunWith(JUnit4::class)
 class CoroutineContextServerInterceptorTest : AbstractCallsTest() {

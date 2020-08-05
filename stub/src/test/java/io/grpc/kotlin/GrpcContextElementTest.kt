@@ -18,10 +18,12 @@ package io.grpc.kotlin
 
 import com.google.common.truth.Truth.assertThat
 import io.grpc.Context
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 
+@Ignore
 @RunWith(JUnit4::class)
 class GrpcContextElementTest {
   val testKey = Context.key<String>("test")
