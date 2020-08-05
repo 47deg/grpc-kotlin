@@ -21,7 +21,6 @@ import arrow.fx.coroutines.CancelToken
 import arrow.fx.coroutines.Fiber
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.IOPool
-import arrow.fx.coroutines.Promise
 import arrow.fx.coroutines.evalOn
 import arrow.fx.coroutines.milliseconds
 import arrow.fx.coroutines.stream.Stream
@@ -53,6 +52,7 @@ import kotlin.coroutines.EmptyCoroutineContext
 
 @RunWith(JUnit4::class)
 class ServerCallsTest : AbstractCallsTest() {
+
   // TODO: add replacement of CoroutineName?
   val context = CoroutineName("server context")
 
@@ -98,25 +98,29 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val clientCall = channel.newCall(sayHelloMethod, CallOptions.DEFAULT)
-    val response = Promise<HelloReply>()
-    val closeStatus = Promise<Status>()
+    val response = UnsafePromise<HelloReply>()
+    val closeStatus = UnsafePromise<Status>()
     clientCall.start(object : ClientCall.Listener<HelloReply>() {
       override fun onMessage(message: HelloReply) {
-        Stream.effect { response.complete(message) }
+        response.complete(Result.success(message))
       }
 
       override fun onClose(status: Status, trailers: Metadata) {
-        Stream.effect { closeStatus.complete(status) }
+        closeStatus.complete(Result.success(status))
       }
     }, Metadata())
     clientCall.sendMessage(helloRequest(""))
     clientCall.request(1)
     processingStarted.join()
-    assertThat(response.get()).isEqualTo(helloReply("Hello!"))
+    val helloReplyResponse = response.tryGet()
+    if (helloReplyResponse != null)
+      assertThat(helloReplyResponse.getOrNull()).isEqualTo(helloReply("Hello!"))
     Stream.unit.delayBy(200.milliseconds).compile().drain() //delay(200)?
     assertThat(closeStatus.tryGet()).isNull()
     clientCall.halfClose()
-    assertThat(closeStatus.get().code).isEqualTo(Status.Code.OK)
+    val closeStatusResult = closeStatus.tryGet()
+    if (closeStatusResult != null)
+      assertThat(closeStatusResult.getOrNull()?.code).isEqualTo(Status.Code.OK)
   }
 
   @Test
@@ -127,12 +131,12 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     )
     val call = channel.newCall(sayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = Promise<Status>()
+    val closeStatus = UnsafePromise<Status>()
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          Stream.effect { closeStatus.complete(status) }
+          closeStatus.complete(Result.success(status))
         }
       },
       Metadata()
@@ -141,9 +145,11 @@ class ServerCallsTest : AbstractCallsTest() {
     call.sendMessage(helloRequest("Amethyst"))
     call.sendMessage(helloRequest("Pearl"))
     call.halfClose()
-    val status = closeStatus.get()
-    assertThat(status.code).isEqualTo(Status.Code.INTERNAL)
-    assertThat(status.description).contains("received two")
+    val status: Result<Status>? = closeStatus.tryGet()
+    if (status != null) {
+      assertThat(status.getOrNull()?.code).isEqualTo(Status.Code.INTERNAL)
+      assertThat(status.getOrNull()?.description).contains("received two")
+    }
   }
 
   @Test
@@ -157,12 +163,12 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     )
     val call = channel.newCall(sayHelloMethod, CallOptions.DEFAULT)
-    val closeTrailers = Promise<Metadata>()
+    val closeTrailers = UnsafePromise<Metadata>()
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          Stream.effect { closeTrailers.complete(trailers) }
+          closeTrailers.complete(Result.success(trailers))
         }
       },
       Metadata()
@@ -170,8 +176,12 @@ class ServerCallsTest : AbstractCallsTest() {
     call.request(1)
     call.sendMessage(helloRequest("Garnet"))
     call.halfClose()
-    val metadata = closeTrailers.get()
-    assertThat(metadata[key]).isEqualTo("value")
+    val result = closeTrailers.tryGet()
+    if (result != null) {
+      result.getOrNull()?.let { metadata ->
+        assertThat(metadata[key]).isEqualTo("value")
+      }
+    }
   }
 
   @Test
@@ -182,21 +192,23 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     )
     val call = channel.newCall(sayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = Promise<Status>()
+    val closeStatus = UnsafePromise<Status>()
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          Stream.effect { closeStatus.complete(status) }
+          closeStatus.complete(Result.success(status))
         }
       },
       Metadata()
     )
     call.request(1)
     call.halfClose()
-    val status = closeStatus.get()
-    assertThat(status.code).isEqualTo(Status.Code.INTERNAL)
-    assertThat(status.description).contains("received none")
+    val status = closeStatus.tryGet()
+    if (status != null) {
+      assertThat(status.getOrNull()?.code).isEqualTo(Status.Code.INTERNAL)
+      assertThat(status.getOrNull()?.description).contains("received none")
+    }
   }
 
   @Test
@@ -269,11 +281,11 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(serverStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = Promise<Status>()
+    val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          Stream.effect { closeStatus.complete(status) }
+          closeStatus.complete(Result.success(status))
         }
       },
       Metadata()
@@ -283,7 +295,9 @@ class ServerCallsTest : AbstractCallsTest() {
     requestReceived.join()
     call.cancel("Test cancellation", null)
     cancelled.join()
-    assertThat(closeStatus.get().code).isEqualTo(Status.Code.CANCELLED)
+    val closeStatusResult = closeStatus.tryGet()
+    if (closeStatusResult != null)
+      assertThat(closeStatusResult.getOrNull()?.code).isEqualTo(Status.Code.CANCELLED)
   }
 
   @Test
@@ -296,11 +310,11 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(serverStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = Promise<Status>()
+    val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          Stream.effect { closeStatus.complete(status) }
+          closeStatus.complete(Result.success(status))
         }
       },
       Metadata()
@@ -309,7 +323,9 @@ class ServerCallsTest : AbstractCallsTest() {
     // message before executing the implementation, so we have to halfClose
     call.sendMessage(multiHelloRequest("Steven"))
     call.halfClose()
-    assertThat(closeStatus.get().code).isEqualTo(Status.Code.OUT_OF_RANGE)
+    val closeStatusResult = closeStatus.tryGet()
+    if (closeStatusResult != null)
+      assertThat(closeStatusResult.getOrNull()?.code).isEqualTo(Status.Code.OUT_OF_RANGE)
   }
 
   @Test
@@ -356,11 +372,11 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(serverStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = Promise<Status>()
+    val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          Stream.effect { closeStatus.complete(status) }
+          closeStatus.complete(Result.success(status))
         }
       },
       Metadata()
@@ -370,7 +386,9 @@ class ServerCallsTest : AbstractCallsTest() {
     // message before executing the implementation, so we have to halfClose
     call.sendMessage(multiHelloRequest("Steven"))
     call.halfClose()
-    assertThat(closeStatus.get().code).isEqualTo(Status.Code.UNKNOWN)
+    val closeStatusResult = closeStatus.tryGet()
+    if (closeStatusResult != null)
+      assertThat(closeStatusResult.getOrNull()?.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
   @Test
@@ -477,11 +495,11 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(clientStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = Promise<Status>()
+    val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          Stream.effect { closeStatus.complete(status) }
+          closeStatus.complete(Result.success(status))
         }
       },
       Metadata()
@@ -490,7 +508,9 @@ class ServerCallsTest : AbstractCallsTest() {
     requestReceived.join()
     call.cancel("Test cancellation", null)
     cancelled.join()
-    assertThat(closeStatus.get().code).isEqualTo(Status.Code.CANCELLED)
+    val result = closeStatus.tryGet()
+    if (result != null)
+      assertThat(result.getOrNull()?.code).isEqualTo(Status.Code.CANCELLED)
   }
 
   @Test
@@ -503,17 +523,19 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(clientStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = Promise<Status>()
+    val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          Stream.effect { closeStatus.complete(status) }
+          closeStatus.complete(Result.success(status))
         }
       },
       Metadata()
     )
     call.sendMessage(helloRequest("Steven"))
-    assertThat(closeStatus.get().code).isEqualTo(Status.Code.INVALID_ARGUMENT)
+    val result = closeStatus.tryGet()
+    if (result != null)
+      assertThat(result.getOrNull()?.code).isEqualTo(Status.Code.INVALID_ARGUMENT)
   }
 
   @Test
@@ -528,17 +550,19 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(clientStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = Promise<Status>()
+    val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          Stream.effect { closeStatus.complete(status) }
+          closeStatus.complete(Result.success(status))
         }
       },
       Metadata()
     )
     call.sendMessage(helloRequest("Steven"))
-    assertThat(closeStatus.get().code).isEqualTo(Status.Code.UNKNOWN)
+    val result = closeStatus.tryGet()
+    if (result != null)
+      assertThat(result.getOrNull()?.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
   @Test
@@ -580,11 +604,11 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(bidiStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = Promise<Status>()
+    val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          Stream.effect { closeStatus.complete(status) }
+          closeStatus.complete(Result.success(status))
         }
       },
       Metadata()
@@ -593,7 +617,9 @@ class ServerCallsTest : AbstractCallsTest() {
     requestReceived.join()
     call.cancel("Test cancellation", null)
     cancelled.join()
-    assertThat(closeStatus.get().code).isEqualTo(Status.Code.CANCELLED)
+    val result = closeStatus.tryGet()
+    if (result != null)
+      assertThat(result.getOrNull()?.code).isEqualTo(Status.Code.CANCELLED)
   }
 
   @Test
@@ -606,17 +632,19 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(bidiStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = Promise<Status>()
+    val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          Stream.effect { closeStatus.complete(status) }
+          closeStatus.complete(Result.success(status))
         }
       },
       Metadata()
     )
     call.sendMessage(helloRequest("Steven"))
-    assertThat(closeStatus.get().code).isEqualTo(Status.Code.INVALID_ARGUMENT)
+    val result = closeStatus.tryGet()
+    if (result != null)
+      assertThat(result.getOrNull()?.code).isEqualTo(Status.Code.INVALID_ARGUMENT)
   }
 
   @Test
@@ -629,17 +657,19 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(bidiStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val closeStatus = Promise<Status>()
+    val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
         override fun onClose(status: Status, trailers: Metadata) {
-          Stream.effect { closeStatus.complete(status) }
+          closeStatus.complete(Result.success(status))
         }
       },
       Metadata()
     )
     call.sendMessage(helloRequest("Steven"))
-    assertThat(closeStatus.get().code).isEqualTo(Status.Code.UNKNOWN)
+    val result = closeStatus.tryGet()
+    if (result != null)
+      assertThat(result.getOrNull()?.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
   @Test
@@ -720,7 +750,6 @@ class ServerCallsTest : AbstractCallsTest() {
         serverStreamingSayHelloMethod
       ) {
         Stream.cancellable<HelloReply> {
-
           val queue = Queue.unbounded<HelloReply>()
           queue.enqueue1(helloReply("1st"))
           queue.enqueue1(helloReply("2nd"))
@@ -746,7 +775,8 @@ class ServerCallsTest : AbstractCallsTest() {
       multiHelloRequest()
     )
     receiveFirstMessage.join()
-    assertThat(responses.take(1).compile().lastOrError()).isEqualTo(helloReply("1st"))
+    val helloReply1st = responses.take(1).compile().lastOrError()
+    assertThat(helloReply1st).isEqualTo(helloReply("1st"))
     receivedFirstMessage.cancel()
     assertThat(
       responses.compile().toList()
