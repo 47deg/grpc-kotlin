@@ -33,6 +33,7 @@ import io.grpc.Status
 import io.grpc.StatusException
 import java.util.concurrent.CancellationException
 import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 import io.grpc.Metadata as GrpcMetadata
 
 /**
@@ -216,11 +217,7 @@ object ServerCalls {
             .effectTap { call.request(1) }
         }.onFinalizeCase { ex ->
           when (ex) {
-            is ExitCase.Failure -> {
-              isActive.complete(Result.failure(ex.failure)) // Signal that we've stopped taking requests
-              call.request(1) // make sure we don't cause backpressure
-              throw ex.failure
-            }
+            is ExitCase.Failure -> call.request(1) // make sure we don't cause backpressure
             else -> Unit
           }
         }
@@ -232,8 +229,7 @@ object ServerCalls {
           println("effectFold $response")
           readiness.suspendUntilReady()
           call.sendMessage(response)
-        }
-        .onFinalizeCase { case ->
+        }.onFinalizeCase { case ->
           when (case) {
             ExitCase.Completed -> call.close(Status.OK, GrpcMetadata())
             ExitCase.Cancelled -> call.close(Status.CANCELLED, GrpcMetadata())
@@ -251,13 +247,10 @@ object ServerCalls {
       }
 
       override fun onMessage(message: RequestT) {
-        println("onMessage: $message")
-        if (isActive.isEmpty()) {
-          if (!requestsChannel.tryOffer1(message)) {
-            throw Status.INTERNAL
-              .withDescription("onMessage should never be called when requestsChannel is unready")
-              .asException()
-          }
+        if (isActive.isEmpty() && !requestsChannel.tryOffer(message)) {
+          throw Status.INTERNAL
+            .withDescription("onMessage should never be called when requestsChannel is unready")
+            .asException()
         }
 
         if (!isActive.isEmpty()) {
@@ -277,3 +270,10 @@ object ServerCalls {
     }
   }
 }
+
+// TODO fix in Arrow Fx Coroutines Streams
+fun <A> Queue<A>.tryOffer(a: A): Boolean =
+  Environment(EmptyCoroutineContext).unsafeRunSync {
+    enqueue1(a)
+    true
+  }
