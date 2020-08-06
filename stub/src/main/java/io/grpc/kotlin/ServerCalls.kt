@@ -16,7 +16,6 @@
 
 package io.grpc.kotlin
 
-import arrow.core.Either
 import arrow.fx.coroutines.Environment
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.stream.Stream
@@ -32,7 +31,6 @@ import io.grpc.ServerCallHandler
 import io.grpc.ServerMethodDefinition
 import io.grpc.Status
 import io.grpc.StatusException
-import java.lang.Exception
 import java.util.concurrent.CancellationException
 import kotlin.coroutines.CoroutineContext
 import io.grpc.Metadata as GrpcMetadata
@@ -214,13 +212,14 @@ object ServerCalls {
         .flatMap {
           requestsChannel
             .dequeue() // For every value we receive, we need to request the next one
-            .interruptWhen { Either.Right(isActive.join()) }
+            .stopWhen { !isActive.isEmpty() }
             .effectTap { call.request(1) }
         }.onFinalizeCase { ex ->
           when (ex) {
             is ExitCase.Failure -> {
-              isActive.complete(Result.success(Unit)) // Signal that we've stopped taking requests
+              isActive.complete(Result.failure(ex.failure)) // Signal that we've stopped taking requests
               call.request(1) // make sure we don't cause backpressure
+              throw ex.failure
             }
             else -> Unit
           }
@@ -229,9 +228,10 @@ object ServerCalls {
     // Runs async cancellable on the provided context, always returns a new cancellable scope.
     val rpcCancelToken = Environment(context).unsafeRunAsyncCancellable {
       implementation(requests)
-        .effectFold(Unit) { _, request ->
+        .effectFold(Unit) { _, response: ResponseT ->
+          println("effectFold $response")
           readiness.suspendUntilReady()
-          call.sendMessage(request)
+          call.sendMessage(response)
         }
         .onFinalizeCase { case ->
           when (case) {
@@ -251,8 +251,8 @@ object ServerCalls {
       }
 
       override fun onMessage(message: RequestT) {
+        println("onMessage: $message")
         if (isActive.isEmpty()) {
-          println("onMessage: $message")
           if (!requestsChannel.tryOffer1(message)) {
             throw Status.INTERNAL
               .withDescription("onMessage should never be called when requestsChannel is unready")
@@ -267,9 +267,7 @@ object ServerCalls {
 
       override fun onHalfClose() {
         println("onHalfClose")
-        Exception().printStackTrace()
         isActive.complete(Result.success(Unit))
-        // requestsChannel.close()
       }
 
       override fun onReady() {

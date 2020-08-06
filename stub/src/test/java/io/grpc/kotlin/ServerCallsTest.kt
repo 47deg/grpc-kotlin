@@ -68,6 +68,7 @@ class ServerCallsTest : AbstractCallsTest() {
     val cancelled = Promise<ExitCase>()
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) { r: HelloRequest ->
+        println("unaryServerMethodDefinition $r")
         request.complete(r)
         guaranteeCase({ never<HelloReply>() }) { case ->
           cancelled.complete(case)

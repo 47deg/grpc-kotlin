@@ -6,8 +6,11 @@ import arrow.fx.coroutines.cancellable
 import arrow.fx.coroutines.stream.Pull
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.flatMap
+import arrow.fx.coroutines.stream.map
+import arrow.fx.coroutines.stream.repeat
 import arrow.fx.coroutines.stream.stream
 import arrow.fx.coroutines.stream.uncons1OrNull
+import arrow.fx.coroutines.stream.unconsOrNull
 import java.util.concurrent.atomic.AtomicReference
 
 fun <O, B> Stream<O>.effectFold(init: B, f: suspend (B, O) -> B): Stream<B> {
@@ -27,6 +30,22 @@ fun <O, B> Stream<O>.effectFold(init: B, f: suspend (B, O) -> B): Stream<B> {
     }
   }.stream()
 }
+
+fun <O> Stream<O>.stopWhen(terminator: () -> Boolean): Stream<O> =
+  asPull().repeat { pull ->
+    pull.unconsOrNull().flatMap { uncons ->
+      when (uncons) {
+        null -> Pull.just(null)
+        else -> {
+          if(!terminator()) {
+            Pull.output<O>(uncons.head).map { uncons.tail }
+          } else {
+            Pull.output(uncons.head).map { null }
+          }
+        }
+      }
+    }
+  }.stream()
 
 /**
  * An eager Promise implementation to bridge results across processes internally.

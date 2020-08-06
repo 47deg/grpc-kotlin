@@ -16,6 +16,7 @@
 
 package io.grpc.kotlin
 
+import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.stream.Pull
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.compile
@@ -59,7 +60,9 @@ internal fun <T> Stream<T>.singleOrStatusStream(
   fun <O> Pull<O, Unit>.firstOrStatus(): Pull<O, Unit> =
     unconsOrNull().flatMap { uncons ->
       when {
-        uncons == null -> Pull.done()
+        uncons == null -> Pull.raiseError(StatusException(
+          Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received none")
+        ))
         uncons.head.size() == 1 -> Pull.output1(uncons.head[0])
         else -> Pull.raiseError(StatusException(
           Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received two")
@@ -79,15 +82,12 @@ internal suspend fun <T> Stream<T>.singleOrStatus(
   descriptor: Any
 ): T = singleOrStatusStream(expected, descriptor).take(1).compile().lastOrNull()!!
 
-// TODO do we have something like this already? the idea is to control backpressure behavior
-/*
-  @FlowPreview
-  public fun <T> Flow<T>.produceIn(scope: CoroutineScope): ReceiveChannel<T> =
-      asChannelFlow().produceImpl(scope)
- */
-suspend fun <T> Stream<T>.produceIn(): Queue<T> =
-  compile().toList().let { list: List<T> ->
-    val queue = Queue.bounded<T>(list.size)
-    list.forEach { queue.enqueue1(it) }
-    queue
+suspend fun <T> Stream<T>.produceIn(): Queue<T> {
+  val queue = Queue.unbounded<T>()
+  ForkConnected {
+    fold(Unit) { _, item ->
+      queue.tryOffer1(item)
+    }.compile().drain()
   }
+  return queue
+}
