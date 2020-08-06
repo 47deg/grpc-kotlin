@@ -32,6 +32,7 @@ import io.grpc.ServerCallHandler
 import io.grpc.ServerMethodDefinition
 import io.grpc.Status
 import io.grpc.StatusException
+import java.lang.Exception
 import java.util.concurrent.CancellationException
 import kotlin.coroutines.CoroutineContext
 import io.grpc.Metadata as GrpcMetadata
@@ -266,6 +267,7 @@ object ServerCalls {
 
       override fun onHalfClose() {
         println("onHalfClose")
+        Exception().printStackTrace()
         isActive.complete(Result.success(Unit))
         // requestsChannel.close()
       }
