@@ -229,6 +229,7 @@ object ServerCalls {
           readiness.suspendUntilReady()
           call.sendMessage(response)
         }.onFinalizeCase { case ->
+          isActive.join() // Before closing the call we need to await the call calling onHalfClosed.
           when (case) {
             ExitCase.Completed -> call.close(Status.OK, GrpcMetadata())
             ExitCase.Cancelled -> call.close(Status.CANCELLED, GrpcMetadata())
@@ -241,11 +242,12 @@ object ServerCalls {
 
     return object : ServerCall.Listener<RequestT>() {
       override fun onCancel() {
-        println("onCancel")
+        println("ServerCall.Listener.onCancel()")
         rpcCancelToken.invoke()
       }
 
       override fun onMessage(message: RequestT) {
+        println("ServerCall.Listener.onMessage($message)")
         if (isActive.isEmpty() && !requestsChannel.tryOffer(message)) {
           throw Status.INTERNAL
             .withDescription("onMessage should never be called when requestsChannel is unready")
@@ -258,12 +260,12 @@ object ServerCalls {
       }
 
       override fun onHalfClose() {
-        println("onHalfClose")
+        println("ServerCall.Listener.onHalfClose()")
         isActive.complete(Result.success(Unit))
       }
 
       override fun onReady() {
-        println("onReady")
+        println("ServerCall.Listener.onReady")
         readiness.onReady()
       }
     }

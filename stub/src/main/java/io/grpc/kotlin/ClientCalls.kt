@@ -276,16 +276,19 @@ object ClientCalls {
     clientCall.start(
       object : ClientCall.Listener<ResponseT>() {
         override fun onMessage(message: ResponseT) {
-          if (!responses.tryOffer1(message)) {
+          println("ClientCall.Listener.onMessage: $message")
+          if (!responses.tryOffer(message)) {
             throw AssertionError("onMessage should never be called until responses is ready")
           }
         }
 
         override fun onClose(status: Status, trailersMetadata: GrpcMetadata) {
+          println("ClientCall.Listener.onClose($status, $trailersMetadata)")
           latch.complete(Result.success(Unit))
         }
 
         override fun onReady() {
+          println("ClientCall.Listener.onReady")
           readiness.onReady()
         }
       },
