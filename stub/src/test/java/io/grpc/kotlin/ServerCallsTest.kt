@@ -53,75 +53,74 @@ class ServerCallsTest : AbstractCallsTest() {
 
   val context = CoroutineName("server context")
 
-  @Test
-  fun simpleUnaryMethod() = runBlocking {
-    val channel = makeChannel(
-      ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) { request: HelloRequest ->
-        helloReply("Hello, ${request.name}")
-      }
-    )
-
-    val stub = GreeterGrpc.newBlockingStub(channel)
-    assertThat(stub.sayHello(helloRequest("Steven"))).isEqualTo(helloReply("Hello, Steven"))
-    assertThat(stub.sayHello(helloRequest("Pearl"))).isEqualTo(helloReply("Hello, Pearl"))
-  }
-
-  @Test
-  fun unaryMethodCancellationPropagatedToServer() = runBlocking {
-    val request = Promise<HelloRequest>()
-    val cancelled = Promise<ExitCase>()
-    val channel = makeChannel(
-      ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) { r: HelloRequest ->
-        request.complete(r)
-        guaranteeCase({ never<HelloReply>() }) { case ->
-          cancelled.complete(case)
-        }
-      }
-    )
-    val expected = helloRequest("Garnet")
-    val stub = GreeterGrpc.newFutureStub(channel)
-    val future = stub.sayHello(expected)
-    assertThat(request.get()).isEqualTo(expected)
-    future.cancel(true)
-    assertThat(cancelled.get()).isEqualTo(ExitCase.Cancelled)
-  }
-
-//  @Ignore // never ends
 //  @Test
-//  fun unaryRequestHandledWithoutWaitingForHalfClose() = runBlocking {
-//    val processingStarted = UnsafePromise<Unit>()
-//    val processingStartedFiber = ForkConnected { processingStarted.join() }
+//  fun simpleUnaryMethod() = runBlocking {
 //    val channel = makeChannel(
-//      ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
-//        processingStarted.complete(Result.success(Unit))
-//        helloReply("Hello!")
+//      ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) { request: HelloRequest ->
+//        helloReply("Hello, ${request.name}")
 //      }
 //    )
 //
-//    val clientCall = channel.newCall(sayHelloMethod, CallOptions.DEFAULT)
-//    val response = UnsafePromise<HelloReply>()
-//    val responseFiber = ForkConnected { response.join() }
-//    val closeStatus = UnsafePromise<Status>()
-//    val closeStatusFiber = ForkConnected { closeStatus.join() }
-//    clientCall.start(object : ClientCall.Listener<HelloReply>() {
-//      override fun onMessage(message: HelloReply) {
-//        response.complete(Result.success(message))
-//      }
-//
-//      override fun onClose(status: Status, trailers: Metadata) {
-//        closeStatus.complete(Result.success(status))
-//      }
-//    }, Metadata())
-//    clientCall.sendMessage(helloRequest(""))
-//    clientCall.request(1)
-//    processingStartedFiber.join()
-//    assertThat(responseFiber.join()).isEqualTo(helloReply("Hello!"))
-//    Stream.unit.delayBy(200.milliseconds).compile().drain() //delay(200)?
-//    assertThat(closeStatus.tryGet()).isNull()
-//    clientCall.halfClose()
-//    assertThat(closeStatusFiber.join().code).isEqualTo(Status.Code.OK)
+//    val stub = GreeterGrpc.newBlockingStub(channel)
+//    assertThat(stub.sayHello(helloRequest("Steven"))).isEqualTo(helloReply("Hello, Steven"))
+//    assertThat(stub.sayHello(helloRequest("Pearl"))).isEqualTo(helloReply("Hello, Pearl"))
 //  }
 //
+//  @Test
+//  fun unaryMethodCancellationPropagatedToServer() = runBlocking {
+//    val request = Promise<HelloRequest>()
+//    val cancelled = Promise<ExitCase>()
+//    val channel = makeChannel(
+//      ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) { r: HelloRequest ->
+//        request.complete(r)
+//        guaranteeCase({ never<HelloReply>() }) { case ->
+//          cancelled.complete(case)
+//        }
+//      }
+//    )
+//    val expected = helloRequest("Garnet")
+//    val stub = GreeterGrpc.newFutureStub(channel)
+//    val future = stub.sayHello(expected)
+//    assertThat(request.get()).isEqualTo(expected)
+//    future.cancel(true)
+//    assertThat(cancelled.get()).isEqualTo(ExitCase.Cancelled)
+//  }
+
+  // Failing due to it was closed before calling: clientCall.halfClose()
+  @Test
+  fun unaryRequestHandledWithoutWaitingForHalfClose() = runBlocking {
+    val processingStarted = Promise<Unit>()
+    val channel = makeChannel(
+      ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
+        processingStarted.complete(Unit)
+        helloReply("Hello!")
+      }
+    )
+
+    val clientCall = channel.newCall(sayHelloMethod, CallOptions.DEFAULT)
+    val response = UnsafePromise<HelloReply>()
+    val closeStatus = UnsafePromise<Status>()
+    clientCall.start(object : ClientCall.Listener<HelloReply>() {
+      override fun onMessage(message: HelloReply) {
+        response.complete(Result.success(message))
+      }
+
+      override fun onClose(status: Status, trailers: Metadata) {
+        closeStatus.complete(Result.success(status))
+      }
+    }, Metadata())
+    clientCall.sendMessage(helloRequest(""))
+    clientCall.request(1)
+    processingStarted.get()
+    val responseResult = response.join()
+    assertThat(responseResult).isEqualTo(helloReply("Hello!"))
+    Stream.unit.delayBy(200.milliseconds).compile().drain()
+    assertThat(closeStatus.isEmpty()).isTrue()
+    clientCall.halfClose()
+    val closeStatusResult = closeStatus.join()
+    assertThat(closeStatusResult.code).isEqualTo(Status.Code.OK)
+  }
+
 //  @Test
 //  fun unaryMethodReceivedTooManyRequests() = runBlocking {
 //    val channel = makeChannel(
@@ -222,7 +221,7 @@ class ServerCallsTest : AbstractCallsTest() {
 //  }
 //
 //  class MyException : Exception()
-
+//
 //  @Test
 //  fun unaryMethodThrowsException() = runBlocking {
 //    val channel = makeChannel(
@@ -237,31 +236,30 @@ class ServerCallsTest : AbstractCallsTest() {
 //    }
 //    assertThat(ex.status.code).isEqualTo(Status.Code.UNKNOWN)
 //  }
-
-  @Ignore
-  @Test
-  fun simpleServerStreaming() = runBlocking {
-    val channel = makeChannel(
-      ServerCalls.serverStreamingServerMethodDefinition(context, serverStreamingSayHelloMethod) {
-        Stream.emits(it.nameList).map { helloReply("Hello, $it") }
-      }
-    )
-
-    val responses: Stream<HelloReply> = ClientCalls.serverStreamingRpc(
-      channel,
-      serverStreamingSayHelloMethod,
-      multiHelloRequest("Garnet", "Amethyst", "Pearl")
-    )
-    // result = 0
-    val result = responses.compile().toList()
-    assertThat(result)
-      .containsExactly(
-        helloReply("Hello, Garnet"),
-        helloReply("Hello, Amethyst"),
-        helloReply("Hello, Pearl")
-      ).inOrder()
-  }
-
+//
+//  @Test
+//  fun simpleServerStreaming() = runBlocking {
+//    val channel = makeChannel(
+//      ServerCalls.serverStreamingServerMethodDefinition(context, serverStreamingSayHelloMethod) {
+//        Stream.emits(it.nameList).map { helloReply("Hello, $it") }
+//      }
+//    )
+//
+//    val responses: Stream<HelloReply> = ClientCalls.serverStreamingRpc(
+//      channel,
+//      serverStreamingSayHelloMethod,
+//      multiHelloRequest("Garnet", "Amethyst", "Pearl")
+//    )
+//    // result = 0
+//    val result = responses.compile().toList()
+//    assertThat(result)
+//      .containsExactly(
+//        helloReply("Hello, Garnet"),
+//        helloReply("Hello, Amethyst"),
+//        helloReply("Hello, Pearl")
+//      ).inOrder()
+//  }
+//
 //  @Test
 //  fun serverStreamingCancellationPropagatedToServer() = runBlocking {
 //    val requestReceived = ForkConnected { }
