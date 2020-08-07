@@ -47,11 +47,14 @@ import io.grpc.StatusRuntimeException
 import io.grpc.examples.helloworld.GreeterGrpc
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.Timeout
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
+
 
 data class CoroutineName(val name: String) : AbstractCoroutineContextElement(CoroutineName) {
   companion object : CoroutineContext.Key<CoroutineName>
@@ -59,6 +62,12 @@ data class CoroutineName(val name: String) : AbstractCoroutineContextElement(Cor
 
 @RunWith(JUnit4::class)
 class ServerCallsTest : AbstractCallsTest() {
+
+
+  @Rule
+  var globalTimeout: Timeout =
+    Timeout.seconds(1) // 10 seconds max per method tested
+
 
   val context = CoroutineName("server context")
 
@@ -76,7 +85,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(stub.sayHello(helloRequest("Pearl"))).isEqualTo(helloReply("Hello, Pearl"))
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun unaryMethodCancellationPropagatedToServer() = runBlocking {
     val request = Promise<HelloRequest>()
     val cancelled = Promise<ExitCase>()
@@ -216,7 +225,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(metadata[key]).isEqualTo("value")
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun unaryMethodReceivedNoRequests() = runBlocking {
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
@@ -301,7 +310,7 @@ class ServerCallsTest : AbstractCallsTest() {
       ).inOrder()
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun serverStreamingCancellationPropagatedToServer() = runBlocking {
     val requestReceived = Promise<Unit>()
     val cancelled = Promise<ExitCase>()
@@ -344,7 +353,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(status.code).isEqualTo(Status.Code.CANCELLED)
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun serverStreamingThrowsStatusException() = runBlocking {
     val channel = makeChannel(
       ServerCalls.serverStreamingServerMethodDefinition(
@@ -374,7 +383,7 @@ class ServerCallsTest : AbstractCallsTest() {
   }
 
   // TODO FIX
-//  @Test(timeout = 1000)
+//  @Test
 //  fun serverStreamingHandledWithoutWaitingForHalfClose() = runBlocking {
 //    val processingStarted = UnsafePromise<Unit>()
 //
@@ -414,7 +423,7 @@ class ServerCallsTest : AbstractCallsTest() {
 //    assertThat(responseChannel.tryDequeue1()).isEqualTo(None) // closed with no further responses
 //  }
 
-  @Test(timeout = 1000)
+  @Test
   fun serverStreamingThrowsException() = runBlocking {
     val channel = makeChannel(
       ServerCalls.serverStreamingServerMethodDefinition(
@@ -444,7 +453,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(status.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun simpleClientStreaming() = runBlocking {
     val channel = makeChannel(
       ServerCalls.clientStreamingServerMethodDefinition(
@@ -473,7 +482,7 @@ class ServerCallsTest : AbstractCallsTest() {
     ).isEqualTo(helloReply("Hello, Ruby, Sapphire"))
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun clientStreamingDoesntWaitForAllRequests() = runBlocking {
     val channel = makeChannel(
       ServerCalls.clientStreamingServerMethodDefinition(
@@ -500,7 +509,7 @@ class ServerCallsTest : AbstractCallsTest() {
     ).isEqualTo(helloReply("Hello, Peridot and Lapis"))
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun clientStreamingWhenRequestsCancelledNoBackpressure() = runBlocking {
     val latch = Promise<Unit>()
 
@@ -534,7 +543,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(response.join()).isEqualTo(helloReply("Hello, Lapis and Peridot"))
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun clientStreamingCancellationPropagatedToServer() = runBlocking {
     val requestReceived = Promise<Unit>()
     val cancelled = Promise<ExitCase>()
@@ -575,7 +584,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(result.code).isEqualTo(Status.Code.CANCELLED)
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun clientStreamingThrowsStatusException() = runBlocking {
     val channel = makeChannel(
       ServerCalls.clientStreamingServerMethodDefinition(
@@ -602,7 +611,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(result.code).isEqualTo(Status.Code.INVALID_ARGUMENT)
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun clientStreamingThrowsException() = runBlocking {
     val channel = makeChannel(
       ServerCalls.clientStreamingServerMethodDefinition(
@@ -631,7 +640,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(result.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun simpleBidiStreamingPingPong() = runBlocking {
     val channel = makeChannel(
       ServerCalls.bidiStreamingServerMethodDefinition(context, bidiStreamingSayHelloMethod) { requests ->
@@ -654,7 +663,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(responses.tryDequeue1()).isEqualTo(None)
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun bidiStreamingCancellationPropagatedToServer() = runBlocking {
     val requestReceived = Promise<Unit>()
     val cancelled = Promise<ExitCase>()
@@ -692,7 +701,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(result.code).isEqualTo(Status.Code.CANCELLED)
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun bidiStreamingThrowsStatusException() = runBlocking {
     val channel = makeChannel(
       ServerCalls.bidiStreamingServerMethodDefinition(
@@ -718,7 +727,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(result.code).isEqualTo(Status.Code.INVALID_ARGUMENT)
   }
 
-  @Test(timeout = 1000)
+  @Test
   fun bidiStreamingThrowsException() = runBlocking {
     val channel = makeChannel(
       ServerCalls.bidiStreamingServerMethodDefinition(
@@ -855,7 +864,7 @@ class ServerCallsTest : AbstractCallsTest() {
 //    ).containsExactly(helloReply("2nd"), helloReply("3rd"))
 //  }
 
-  @Test(timeout = 1000)
+  @Test
   fun contextPreservation() = runBlocking {
     val contextKey = Context.key<String>("foo")
     val channel = makeChannel(
