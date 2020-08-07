@@ -225,8 +225,7 @@ object ServerCalls {
     // Runs async cancellable on the provided context, always returns a new cancellable scope.
     val rpcCancelToken = Environment(context).unsafeRunAsyncCancellable {
       implementation(requests)
-        .effectFold(Unit) { _, response: ResponseT ->
-          println("effectFold $response")
+        .effectMap { response: ResponseT ->
           readiness.suspendUntilReady()
           call.sendMessage(response)
         }.onFinalizeCase { case ->

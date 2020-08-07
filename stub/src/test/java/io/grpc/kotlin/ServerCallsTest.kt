@@ -17,7 +17,6 @@
 package io.grpc.kotlin
 
 import arrow.core.None
-import arrow.fx.coroutines.ComputationPool
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.Promise
@@ -42,25 +41,30 @@ import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+
+data class CoroutineName(val name: String) : AbstractCoroutineContextElement(CoroutineName) {
+  companion object : CoroutineContext.Key<CoroutineName>
+}
 
 @RunWith(JUnit4::class)
 class ServerCallsTest : AbstractCallsTest() {
 
-  // TODO: add replacement of CoroutineName?
-  val context = ComputationPool
+  val context = CoroutineName("server context")
 
-//  @Test
-//  fun simpleUnaryMethod() = runBlocking {
-//    val channel = makeChannel(
-//      ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) { request ->
-//        helloReply("Hello, ${request.name}")
-//      }
-//    )
-//
-//    val stub = GreeterGrpc.newBlockingStub(channel)
-//    assertThat(stub.sayHello(helloRequest("Steven"))).isEqualTo(helloReply("Hello, Steven"))
-//    assertThat(stub.sayHello(helloRequest("Pearl"))).isEqualTo(helloReply("Hello, Pearl"))
-//  }
+  @Test
+  fun simpleUnaryMethod() = runBlocking {
+    val channel = makeChannel(
+      ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) { request: HelloRequest ->
+        helloReply("Hello, ${request.name}")
+      }
+    )
+
+    val stub = GreeterGrpc.newBlockingStub(channel)
+    assertThat(stub.sayHello(helloRequest("Steven"))).isEqualTo(helloReply("Hello, Steven"))
+    assertThat(stub.sayHello(helloRequest("Pearl"))).isEqualTo(helloReply("Hello, Pearl"))
+  }
 
   @Test
   fun unaryMethodCancellationPropagatedToServer() = runBlocking {
@@ -68,7 +72,6 @@ class ServerCallsTest : AbstractCallsTest() {
     val cancelled = Promise<ExitCase>()
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) { r: HelloRequest ->
-        println("unaryServerMethodDefinition $r")
         request.complete(r)
         guaranteeCase({ never<HelloReply>() }) { case ->
           cancelled.complete(case)
@@ -235,6 +238,7 @@ class ServerCallsTest : AbstractCallsTest() {
 //    assertThat(ex.status.code).isEqualTo(Status.Code.UNKNOWN)
 //  }
 
+  @Ignore
   @Test
   fun simpleServerStreaming() = runBlocking {
     val channel = makeChannel(
@@ -249,7 +253,8 @@ class ServerCallsTest : AbstractCallsTest() {
       multiHelloRequest("Garnet", "Amethyst", "Pearl")
     )
     // result = 0
-    assertThat(responses.compile().toList())
+    val result = responses.compile().toList()
+    assertThat(result)
       .containsExactly(
         helloReply("Hello, Garnet"),
         helloReply("Hello, Amethyst"),
