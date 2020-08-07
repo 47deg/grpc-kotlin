@@ -53,26 +53,25 @@ import io.grpc.StatusException
  * The purpose of this function is to enable the one element to get processed before we have
  * confirmation that the input flow is done.
  */
-internal fun <T> Stream<T>.singleOrStatusStream(
-  expected: String,
-  descriptor: Any
-): Stream<T> {
-
-  fun <O> Pull<O, Unit>.firstOrStatus(): Pull<O, Unit> =
-    unconsOrNull().flatMap { uncons ->
-//      println("uncons: $uncons")
-      when {
-        uncons == null -> Pull.raiseError(StatusException(
+internal fun <O> Stream<O>.singleOrStatusStream(expected: String, descriptor: Any): Stream<O> {
+  fun go(prev: O?, s: Pull<O, Unit>, count: Int): Pull<Nothing, O> =
+    s.unconsOrNull().flatMap { uncons ->
+      when (uncons) {
+        null -> if (count == 1) Pull.just(prev) as Pull<Nothing, O>
+        else Pull.raiseError(StatusException(
           Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received none")
         ))
-        uncons.head.size() == 1 /*&& uncons.tail == Pull.done*/ -> Pull.output1(uncons.head[0])
-        else -> Pull.raiseError(StatusException(
-          Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received two")
-        ))
+
+        else -> when {
+          uncons.head.size() > 1 || count > 0 -> Pull.raiseError(StatusException(
+            Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received two")
+          ))
+          else -> go(uncons.head[0], uncons.tail, 1)
+        }
       }
     }
 
-  return asPull().firstOrStatus().stream()
+  return go(null, asPull(), 0).flatMap(Pull.Companion::output1).stream()
 }
 
 /**

@@ -236,7 +236,10 @@ object ServerCalls {
               isActive.join() // Before closing the call we need to await the call calling onHalfClosed.
               call.close(Status.OK, GrpcMetadata())
             }
-            ExitCase.Cancelled -> call.close(Status.CANCELLED, GrpcMetadata())
+            ExitCase.Cancelled -> {
+              isActive.join() // Before closing the call we need to await the call calling onHalfClosed.
+              call.close(Status.CANCELLED, GrpcMetadata())
+            }
             is ExitCase.Failure -> call.close(Status.fromThrowable(case.failure), Status.trailersFromThrowable(case.failure))
           }
         }

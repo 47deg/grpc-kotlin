@@ -189,3 +189,8 @@ abstract class AbstractCallsTest {
     Unit
   }
 }
+
+fun <R> runBlocking(block: suspend () -> R): Unit = Environment(IOPool).unsafeRunSync {
+  block()
+  Unit
+}
