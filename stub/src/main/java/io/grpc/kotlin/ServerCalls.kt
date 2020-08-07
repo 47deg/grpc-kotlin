@@ -21,6 +21,7 @@ import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.flatten
 import io.grpc.MethodDescriptor
 import io.grpc.MethodDescriptor.MethodType.BIDI_STREAMING
 import io.grpc.MethodDescriptor.MethodType.CLIENT_STREAMING
@@ -33,7 +34,6 @@ import io.grpc.Status
 import io.grpc.StatusException
 import java.util.concurrent.CancellationException
 import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.EmptyCoroutineContext
 import io.grpc.Metadata as GrpcMetadata
 
 /**
@@ -216,6 +216,7 @@ object ServerCalls {
             .stopWhen { !isActive.isEmpty() }
             .effectTap { call.request(1) }
         }.onFinalizeCase { ex ->
+          println("ServerCall.Requests.onFinalizeCase: $ex")
           when (ex) {
             is ExitCase.Failure -> call.request(1) // make sure we don't cause backpressure
             else -> Unit
@@ -224,18 +225,22 @@ object ServerCalls {
 
     // Runs async cancellable on the provided context, always returns a new cancellable scope.
     val rpcCancelToken = Environment(context).unsafeRunAsyncCancellable {
-      implementation(requests)
+      Stream.effect { implementation(requests) }.flatten()
         .effectMap { response: ResponseT ->
           readiness.suspendUntilReady()
           call.sendMessage(response)
         }.onFinalizeCase { case ->
-          isActive.join() // Before closing the call we need to await the call calling onHalfClosed.
+          println("ServerCalls.Server.onFinalizeCase: $case")
           when (case) {
-            ExitCase.Completed -> call.close(Status.OK, GrpcMetadata())
+            ExitCase.Completed -> {
+              isActive.join() // Before closing the call we need to await the call calling onHalfClosed.
+              call.close(Status.OK, GrpcMetadata())
+            }
             ExitCase.Cancelled -> call.close(Status.CANCELLED, GrpcMetadata())
             is ExitCase.Failure -> call.close(Status.fromThrowable(case.failure), Status.trailersFromThrowable(case.failure))
           }
         }
+        .attempt() // We have already forwarded any errors in call.close
         .compile()
         .drain()
     }
@@ -248,7 +253,7 @@ object ServerCalls {
 
       override fun onMessage(message: RequestT) {
         println("ServerCall.Listener.onMessage($message)")
-        if (isActive.isEmpty() && !requestsChannel.tryOffer(message)) {
+        if (isActive.isEmpty() && !requestsChannel.tryOffer1(message)) {
           throw Status.INTERNAL
             .withDescription("onMessage should never be called when requestsChannel is unready")
             .asException()
@@ -271,10 +276,3 @@ object ServerCalls {
     }
   }
 }
-
-// TODO fix in Arrow Fx Coroutines Streams
-fun <A> Queue<A>.tryOffer(a: A): Boolean =
-  Environment(EmptyCoroutineContext).unsafeRunSync {
-    enqueue1(a)
-    true
-  }

@@ -57,13 +57,15 @@ internal fun <T> Stream<T>.singleOrStatusStream(
   expected: String,
   descriptor: Any
 ): Stream<T> {
+
   fun <O> Pull<O, Unit>.firstOrStatus(): Pull<O, Unit> =
     unconsOrNull().flatMap { uncons ->
+//      println("uncons: $uncons")
       when {
         uncons == null -> Pull.raiseError(StatusException(
           Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received none")
         ))
-        uncons.head.size() == 1 -> Pull.output1(uncons.head[0])
+        uncons.head.size() == 1 /*&& uncons.tail == Pull.done*/ -> Pull.output1(uncons.head[0])
         else -> Pull.raiseError(StatusException(
           Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received two")
         ))

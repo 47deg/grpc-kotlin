@@ -41,7 +41,7 @@ internal class Readiness (
   private val channel = Queue.unsafeBounded<Unit>(1)
 
   fun onReady() {
-    if (!channel.tryOffer(Unit)) {
+    if (!channel.tryOffer1(Unit)) {
       throw AssertionError(
         "Should be impossible; a CONFLATED channel should never return false on offer"
       )

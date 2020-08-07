@@ -31,7 +31,7 @@ dependencies {
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:${rootProject.ext.coroutinesVersion}"
 
     // Arrow
-    implementation "io.arrow-kt:arrow-fx-coroutines:0.11.0-SNAPSHOT"
+    implementation("io.arrow-kt:arrow-fx-coroutines:0.11.0-SNAPSHOT") { changing = true }
 
     // Grpc and Protobuf
     implementation "io.grpc:grpc-protobuf:${rootProject.ext.grpcVersion}"

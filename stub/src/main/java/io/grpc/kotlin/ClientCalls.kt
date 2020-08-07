@@ -276,12 +276,12 @@ object ClientCalls {
     clientCall.start(
       object : ClientCall.Listener<ResponseT>() {
         override fun onMessage(message: ResponseT) {
-          if (!responses.tryOffer(message)) {
+          if (!responses.tryOffer1(message)) {
             throw AssertionError("onMessage should never be called until responses is ready")
           }
         }
 
-        override fun onClose(status: Status, trailersMetadata: GrpcMetadata) {
+        override fun onClose(status: Status, trailersMetadata: GrpcMetadata?) {
           println("ClientCall.Listener.onClose($status, $trailersMetadata)")
           latch.complete(Result.success(Unit))
         }
@@ -306,6 +306,7 @@ object ClientCalls {
       request.sendTo(clientCall, readiness)
       clientCall.halfClose()
     }).onFinalizeCase { ex ->
+      println("ClientCalls.onFinalizeCase: $ex")
       when (ex) {
         is ExitCase.Cancelled -> clientCall.cancel("Collection of requests was cancelled", null)
         is ExitCase.Failure -> clientCall.cancel("Collection of requests completed exceptionally", ex.failure)

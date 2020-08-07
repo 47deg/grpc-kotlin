@@ -64,9 +64,9 @@ data class CoroutineName(val name: String) : AbstractCoroutineContextElement(Cor
 class ServerCallsTest : AbstractCallsTest() {
 
 
-  @Rule
+  @get:Rule
   var globalTimeout: Timeout =
-    Timeout.seconds(1) // 10 seconds max per method tested
+    Timeout.seconds(5) // 10 seconds max per method tested
 
 
   val context = CoroutineName("server context")
@@ -133,7 +133,7 @@ class ServerCallsTest : AbstractCallsTest() {
         response.complete(Result.success(message))
       }
 
-      override fun onClose(status: Status, trailers: Metadata) {
+      override fun onClose(status: Status, trailers: Metadata?) {
         println("onClose: $status, $trailers")
         closeStatus.complete(Result.success(status))
       }
@@ -173,7 +173,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata) {
+        override fun onClose(status: Status, trailers: Metadata?) {
           closeStatus.complete(Result.success(status))
         }
       },
@@ -206,11 +206,11 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val call = channel.newCall(sayHelloMethod, CallOptions.DEFAULT)
-    val closeTrailers = UnsafePromise<Metadata>()
+    val closeTrailers = UnsafePromise<Metadata?>()
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata) {
+        override fun onClose(status: Status, trailers: Metadata?) {
           closeTrailers.complete(Result.success(trailers))
         }
       },
@@ -222,7 +222,7 @@ class ServerCallsTest : AbstractCallsTest() {
     call.halfClose()
 
     val metadata = closeTrailers.join()
-    assertThat(metadata[key]).isEqualTo("value")
+    assertThat(metadata?.get(key)).isEqualTo("value")
   }
 
   @Test
@@ -238,7 +238,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata) {
+        override fun onClose(status: Status, trailers: Metadata?) {
           closeStatus.complete(Result.success(status))
         }
       },
@@ -334,7 +334,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata) {
+        override fun onClose(status: Status, trailers: Metadata?) {
           closeStatus.complete(Result.success(status))
         }
       },
@@ -366,7 +366,7 @@ class ServerCallsTest : AbstractCallsTest() {
     val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata) {
+        override fun onClose(status: Status, trailers: Metadata?) {
           closeStatus.complete(Result.success(status))
         }
       },
@@ -402,7 +402,7 @@ class ServerCallsTest : AbstractCallsTest() {
 //        responseChannel.tryOffer1(message)
 //      }
 //
-//      override fun onClose(status: Status, trailers: Metadata) {
+//      override fun onClose(status: Status, trailers: Metadata?) {
 //        // no need to close it: responseChannel.close()
 //      }
 //    }, Metadata())
@@ -437,7 +437,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata) {
+        override fun onClose(status: Status, trailers: Metadata?) {
           closeStatus.complete(Result.success(status))
         }
       },
@@ -568,7 +568,7 @@ class ServerCallsTest : AbstractCallsTest() {
     val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata) {
+        override fun onClose(status: Status, trailers: Metadata?) {
           closeStatus.complete(Result.success(status))
         }
       },
@@ -598,7 +598,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata) {
+        override fun onClose(status: Status, trailers: Metadata?) {
           closeStatus.complete(Result.success(status))
         }
       },
@@ -627,7 +627,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata) {
+        override fun onClose(status: Status, trailers: Metadata?) {
           closeStatus.complete(Result.success(status))
         }
       },
@@ -675,6 +675,7 @@ class ServerCallsTest : AbstractCallsTest() {
       ) { requests: Stream<HelloRequest> ->
         requests.effectMap {
           requestReceived.complete(Unit)
+
           guaranteeCase({ never<HelloReply>() }) { case ->
             cancelled.complete(case)
           }
@@ -686,7 +687,7 @@ class ServerCallsTest : AbstractCallsTest() {
     val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata) {
+        override fun onClose(status: Status, trailers: Metadata?) {
           closeStatus.complete(Result.success(status))
         }
       },
@@ -715,7 +716,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata) {
+        override fun onClose(status: Status, trailers: Metadata?) {
           closeStatus.complete(Result.success(status))
         }
       },
@@ -740,7 +741,7 @@ class ServerCallsTest : AbstractCallsTest() {
     val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata) {
+        override fun onClose(status: Status, trailers: Metadata?) {
           closeStatus.complete(Result.success(status))
         }
       },
