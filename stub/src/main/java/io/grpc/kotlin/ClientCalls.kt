@@ -276,7 +276,6 @@ object ClientCalls {
     clientCall.start(
       object : ClientCall.Listener<ResponseT>() {
         override fun onMessage(message: ResponseT) {
-          println("ClientCall.Listener.onMessage: $message")
           if (!responses.tryOffer(message)) {
             throw AssertionError("onMessage should never be called until responses is ready")
           }

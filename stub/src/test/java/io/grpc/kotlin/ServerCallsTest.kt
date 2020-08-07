@@ -282,7 +282,6 @@ class ServerCallsTest : AbstractCallsTest() {
   fun simpleServerStreaming() = runBlocking {
     val channel = makeChannel(
       ServerCalls.serverStreamingServerMethodDefinition(context, serverStreamingSayHelloMethod) {
-        //Stream.emits(it.nameList).map { helloReply("Hello, $it") }
         Stream.iterable(it.nameList).map { helloReply("Hello, $it") }
       }
     )
