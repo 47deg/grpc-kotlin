@@ -20,6 +20,7 @@ import arrow.core.Either
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
+import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.flatten
 import io.grpc.CallOptions
@@ -239,7 +240,7 @@ object ClientCalls {
         readiness: Readiness
       ) {
         readiness.suspendUntilReady()
-        requestStream.effectMap { request: RequestT ->
+        requestStream.compile().lastOrError().let { request: RequestT ->
           clientCall.sendMessage(request)
           readiness.suspendUntilReady()
         }

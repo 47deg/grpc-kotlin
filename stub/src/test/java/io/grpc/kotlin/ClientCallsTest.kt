@@ -16,15 +16,12 @@
 
 package io.grpc.kotlin
 
-import arrow.fx.coroutines.Environment
 import arrow.fx.coroutines.Fiber
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
-import arrow.fx.coroutines.stream.Stream.Companion.just
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
-import arrow.fx.coroutines.stream.handleErrorWith
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.extensions.proto.ProtoTruth.assertThat
 import io.grpc.CallOptions
@@ -35,19 +32,21 @@ import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
 import io.grpc.examples.helloworld.MultiHelloRequest
 import io.grpc.stub.StreamObserver
-import org.junit.Ignore
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.Timeout
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.coroutines.EmptyCoroutineContext
 
-@Ignore
 /** Tests for [ClientCalls]. */
 @RunWith(JUnit4::class)
 class ClientCallsTest : AbstractCallsTest() {
+
+  @get:Rule
+  var globalTimeout: Timeout = Timeout.seconds(5) // 10 seconds max per method tested
 
   /**
    * Verifies that a simple unary RPC successfully returns results to a suspend function.
@@ -88,15 +87,11 @@ class ClientCallsTest : AbstractCallsTest() {
    */
   @Test
   fun unaryServerDoesNotRespondGrpcTimeout(): Unit = runBlocking {
-    val serverCancelled = ForkConnected { }
+    val serverCancelled = UnsafePromise<Unit>()
 
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun sayHello(request: HelloRequest, responseObserver: StreamObserver<HelloReply>) {
-        whenContextIsCancelled {
-          effect {
-            serverCancelled.cancel()
-          }
-        }
+        whenContextIsCancelled { serverCancelled.complete(Result.success(Unit)) }
       }
     }
 
@@ -169,19 +164,13 @@ class ClientCallsTest : AbstractCallsTest() {
   @Test
   fun unaryCancelCoroutinePropagatesToServer() = runBlocking {
     // Completes if and only if the server processes cancellation.
-    val serverReceived = ForkConnected { }
-    val serverCancelled = ForkConnected { }
+    val serverReceived = UnsafePromise<Unit>()
+    val serverCancelled = UnsafePromise<Unit>()
 
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun sayHello(request: HelloRequest, responseObserver: StreamObserver<HelloReply>) {
-        effect {
-          serverReceived.cancel()
-          whenContextIsCancelled {
-            effect {
-              serverCancelled.cancel()
-            }
-          }
-        }
+        serverReceived.complete(Result.success(Unit))
+        whenContextIsCancelled { serverCancelled.complete(Result.success(Unit)) }
       }
     }
 
@@ -277,7 +266,9 @@ class ClientCallsTest : AbstractCallsTest() {
       request = multiHelloRequest("Cindy", "Jeff", "Aki")
     )
 
-    assertThat(rpc.compile().toList()).containsExactly(
+    val helloReplies = rpc.compile().toList()
+    println("helloReplies: $helloReplies")
+    assertThat(helloReplies).containsExactly(
       helloReply("Hello, Cindy"), helloReply("Hello, Jeff"), helloReply("Hello, Aki")
     ).inOrder()
   }
@@ -396,27 +387,28 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    // val requests = Channel<HelloRequest>()
     val requests = Queue.bounded<HelloRequest>(1)
-    // TODO async
-    val response: HelloReply = Environment(EmptyCoroutineContext).unsafeRunSync {
-      ClientCalls.clientStreamingRpc(
-        channel = channel,
-        method = clientStreamingSayHelloMethod,
-        requests = requests.dequeue()
-      )
-    }
-    requests.tryOffer1(helloRequest("Tim"))
-    requests.tryOffer1(helloRequest("Jim"))
-    assertThat(response).isEqualTo(helloReply("Hello, Tim, Jim"))
-    effect {
-      requests.tryOffer1(helloRequest("John"))
-    }.handleErrorWith { allowed: Throwable ->
-      // Either this should successfully send, or the channel should be cancelled; either is
-      // acceptable.  The one unacceptable outcome would be for these operations to suspend
-      // indefinitely, waiting for them to be sent.
-      just(allowed)
-    }
+    Stream.bracket({
+      ForkConnected {
+        ClientCalls.clientStreamingRpc(
+          channel = channel,
+          method = clientStreamingSayHelloMethod,
+          requests = requests.dequeue()
+        )
+      }
+    }, { response: Fiber<HelloReply> ->
+      requests.tryOffer1(helloRequest("Tim"))
+      requests.tryOffer1(helloRequest("Jim"))
+      val helloReply = response.join()
+      assertThat(helloReply).isEqualTo(helloReply("Hello, Tim, Jim"))
+      try {
+        requests.tryOffer1(helloRequest("John"))
+      } catch (allowed: CancellationException) {
+        // Either this should successfully send, or the channel should be cancelled; either is
+        // acceptable.  The one unacceptable outcome would be for these operations to suspend
+        // indefinitely, waiting for them to be sent.
+      }
+    }).compile().drain()
   }
 
   @Test
@@ -462,7 +454,7 @@ class ClientCallsTest : AbstractCallsTest() {
       assertThrows<CancellationException> {
         requests.tryOffer1(helloRequest("John"))
       }
-    })
+    }).compile().drain()
   }
 
   @Test
@@ -616,14 +608,14 @@ class ClientCallsTest : AbstractCallsTest() {
       helloRequest("Sunstone")
     }
 
-    val responses = ClientCalls.bidiStreamingRpc(
+    val responses: Stream<HelloReply> = ClientCalls.bidiStreamingRpc(
       channel = channel,
       method = bidiStreamingSayHelloMethod,
       requests = requests
     )
 
-    assertThat(responses.take(1)).isEqualTo(helloReply("Hello, Sunstone"))
-    assertThat(responses.take(1)).isEqualTo(helloReply("Hello, Sunstone"))
+    assertThat(responses.take(1).compile().lastOrError()).isEqualTo(helloReply("Hello, Sunstone"))
+    assertThat(responses.take(1).compile().lastOrError()).isEqualTo(helloReply("Hello, Sunstone"))
     assertThat(requestsEvaluations.get()).isEqualTo(2)
   }
 }

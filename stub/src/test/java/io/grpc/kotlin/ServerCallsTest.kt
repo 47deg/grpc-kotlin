@@ -63,11 +63,9 @@ data class CoroutineName(val name: String) : AbstractCoroutineContextElement(Cor
 @RunWith(JUnit4::class)
 class ServerCallsTest : AbstractCallsTest() {
 
-
   @get:Rule
   var globalTimeout: Timeout =
     Timeout.seconds(5) // 10 seconds max per method tested
-
 
   val context = CoroutineName("server context")
 

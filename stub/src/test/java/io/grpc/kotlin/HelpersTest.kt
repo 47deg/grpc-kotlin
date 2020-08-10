@@ -1,9 +1,7 @@
 package io.grpc.kotlin
 
 import arrow.core.Either
-import arrow.fx.coroutines.milliseconds
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.append
 import arrow.fx.coroutines.stream.compile
 import com.google.common.truth.Truth.assertThat
 import io.grpc.Status
@@ -14,7 +12,7 @@ import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 
 @RunWith(JUnit4::class)
-class HelpersTest {
+class HelpersTest : AbstractCallsTest() {
 
   @Test
   fun `Empty stream results in none internal exception`() = runBlocking {
