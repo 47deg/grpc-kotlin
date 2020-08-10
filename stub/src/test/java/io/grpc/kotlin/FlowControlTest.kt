@@ -40,9 +40,6 @@ import org.junit.runners.JUnit4
 class FlowControlTest : AbstractCallsTest() {
   val context = CoroutineName("server context")
 
-  @get:Rule
-  var globalTimeout: Timeout = Timeout.seconds(5) // 10 seconds max per method tested
-
   private suspend fun <T> Stream<T>.produceUnbuffered(): Queue<T> =
     produceIn()
 

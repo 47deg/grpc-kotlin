@@ -45,9 +45,6 @@ import java.util.concurrent.atomic.AtomicInteger
 @RunWith(JUnit4::class)
 class ClientCallsTest : AbstractCallsTest() {
 
-  @get:Rule
-  var globalTimeout: Timeout = Timeout.seconds(5) // 10 seconds max per method tested
-
   /**
    * Verifies that a simple unary RPC successfully returns results to a suspend function.
    */

@@ -63,13 +63,13 @@ data class CoroutineName(val name: String) : AbstractCoroutineContextElement(Cor
 @RunWith(JUnit4::class)
 class ServerCallsTest : AbstractCallsTest() {
 
-  @get:Rule
-  var globalTimeout: Timeout =
-    Timeout.seconds(5) // 10 seconds max per method tested
+//  @get:Rule
+//  var globalTimeout: Timeout =
+//    Timeout.seconds(5) // 10 seconds max per method tested
 
   val context = CoroutineName("server context")
 
-  @Test
+  @Test // debugging works, race condition?
   fun simpleUnaryMethod() = runBlocking {
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) { request: HelloRequest ->
@@ -270,7 +270,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
   class MyException : Exception()
 
-  @Test
+  @Test // debugging works, race condition?
   fun unaryMethodThrowsException() = runBlocking {
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
@@ -285,7 +285,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(ex.status.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
-  @Test
+  @Test // debugging works, race condition?
   fun simpleServerStreaming() = runBlocking {
     val channel = makeChannel(
       ServerCalls.serverStreamingServerMethodDefinition(context, serverStreamingSayHelloMethod) {
@@ -298,7 +298,6 @@ class ServerCallsTest : AbstractCallsTest() {
       serverStreamingSayHelloMethod,
       multiHelloRequest("Garnet", "Amethyst", "Pearl")
     )
-    // result = 0
     val result = responses.compile().toList()
     assertThat(result)
       .containsExactly(
@@ -308,7 +307,7 @@ class ServerCallsTest : AbstractCallsTest() {
       ).inOrder()
   }
 
-  @Test
+  @Test // ExitCase is correct (ExitCase.Cancelled) but never ends
   fun serverStreamingCancellationPropagatedToServer() = runBlocking {
     val requestReceived = Promise<Unit>()
     val cancelled = Promise<ExitCase>()
@@ -345,7 +344,8 @@ class ServerCallsTest : AbstractCallsTest() {
     requestReceived.get()
     call.cancel("Test cancellation", null)
 
-    assertThat(cancelled.get()).isEqualTo(ExitCase.Cancelled)
+    val cancelledResult = cancelled.get()
+    assertThat(cancelledResult).isEqualTo(ExitCase.Cancelled)
 
     val status = closeStatus.join()
     assertThat(status.code).isEqualTo(Status.Code.CANCELLED)
@@ -530,18 +530,18 @@ class ServerCallsTest : AbstractCallsTest() {
         requestChannel.dequeue()
       )
     }
-    requestChannel.enqueue1(helloRequest("Lapis"))
-    requestChannel.enqueue1(helloRequest("Peridot"))
+    requestChannel.tryOffer1(helloRequest("Lapis"))
+    requestChannel.tryOffer1(helloRequest("Peridot"))
 
     for (i in 1..1000) {
-      requestChannel.enqueue1(helloRequest("Ruby"))
+      requestChannel.tryOffer1(helloRequest("Ruby"))
     }
 
     latch.complete(Unit)
     assertThat(response.join()).isEqualTo(helloReply("Hello, Lapis and Peridot"))
   }
 
-  @Test
+  @Test // executed individually it works :S
   fun clientStreamingCancellationPropagatedToServer() = runBlocking {
     val requestReceived = Promise<Unit>()
     val cancelled = Promise<ExitCase>()
@@ -889,8 +889,7 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     )
 
-    assertThat(
-      ClientCalls.unaryRpc(channel, sayHelloMethod, helloRequest(""))
-    ).isEqualTo(helloReply("Hello!"))
+    val response = ClientCalls.unaryRpc(channel, sayHelloMethod, helloRequest(""))
+    assertThat(response).isEqualTo(helloReply("Hello!"))
   }
 }

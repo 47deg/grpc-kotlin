@@ -16,7 +16,11 @@
 
 package io.grpc.kotlin
 
+import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.ForkConnected
+import arrow.fx.coroutines.Promise
+import arrow.fx.coroutines.guaranteeCase
+import arrow.fx.coroutines.never
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
@@ -31,16 +35,15 @@ import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterCoroutineImplBase
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
 import io.grpc.examples.helloworld.MultiHelloRequest
-import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 
-@Ignore
 @RunWith(JUnit4::class)
 class GeneratedCodeTest : AbstractCallsTest() {
+
   @Test
   fun simpleUnary() {
     val server = object : GreeterCoroutineImplBase() {
@@ -61,12 +64,12 @@ class GeneratedCodeTest : AbstractCallsTest() {
 
   @Test
   fun unaryServerDoesNotRespondGrpcTimeout() = runBlocking {
-    val serverCancelled = ForkConnected { }
+    val serverCancelled = Promise<ExitCase>()
 
     val channel = makeChannel(object : GreeterCoroutineImplBase() {
       override suspend fun sayHello(request: HelloRequest): HelloReply {
-        suspendUntilCancelled {
-          serverCancelled.join()
+        return guaranteeCase({ never<HelloReply>() }) { case ->
+          serverCancelled.complete(case)
         }
       }
     })
@@ -77,18 +80,18 @@ class GeneratedCodeTest : AbstractCallsTest() {
       stub.sayHello(helloRequest("Topaz"))
     }
     assertThat(ex.status.code).isEqualTo(Status.Code.DEADLINE_EXCEEDED)
-    serverCancelled.join()
+    serverCancelled.get()
   }
 
   @Test
   fun unaryClientCancellation() = runBlocking {
-    val helloReceived = ForkConnected {}
-    val helloCancelled = ForkConnected {}
+    val helloReceived = Promise<HelloRequest>()
+    val helloCancelled = Promise<ExitCase>()
     val helloChannel = makeChannel(object : GreeterCoroutineImplBase() {
       override suspend fun sayHello(request: HelloRequest): HelloReply {
-        helloReceived.join()
-        suspendUntilCancelled {
-          helloCancelled.join()
+        helloReceived.complete(request)
+        return guaranteeCase({ never<HelloReply>() }) { case ->
+          helloCancelled.complete(case)
         }
       }
     })
@@ -98,9 +101,9 @@ class GeneratedCodeTest : AbstractCallsTest() {
       val request = helloRequest("Steven")
       helloStub.sayHello(request)
     }
-    helloReceived.join()
+    helloReceived.get()
     result.cancel()
-    helloCancelled.join()
+    helloCancelled.get()
   }
 
 
@@ -151,7 +154,7 @@ class GeneratedCodeTest : AbstractCallsTest() {
     })
 
     val stub = GreeterArrowCoroutineStub(channel)
-    val requests = Stream.emits(
+    val requests = Stream(
       helloRequest("Peridot"),
       helloRequest("Lapis")
     )
@@ -161,15 +164,16 @@ class GeneratedCodeTest : AbstractCallsTest() {
 
   @Test
   fun clientStreamingRpcCancellation() = runBlocking {
-    val serverReceived = ForkConnected { }
-    val serverCancelled = ForkConnected { }
+    val serverReceived = Promise<HelloRequest>()
+    val serverCancelled = Promise<ExitCase>()
     val channel = makeChannel(object : GreeterCoroutineImplBase() {
       override suspend fun clientStreamSayHello(requests: Stream<HelloRequest>): HelloReply {
-        requests.compile().lastOrError().let {
-          serverReceived.join()
-          suspendUntilCancelled { serverCancelled.join() }
-        }
-        throw AssertionError("unreachable")
+        requests.compile().lastOrNull()?.let {
+          serverReceived.complete(it)
+          return guaranteeCase({ never<HelloReply>() }) { case ->
+            serverCancelled.complete(case)
+          }
+        } ?: throw AssertionError("unreachable")
       }
     })
 
@@ -179,9 +183,9 @@ class GeneratedCodeTest : AbstractCallsTest() {
       stub.clientStreamSayHello(requests.dequeue())
     }
     requests.tryOffer1(helloRequest("Aquamarine"))
-    serverReceived.join()
+    serverReceived.get()
     response.cancel()
-    serverCancelled.join()
+    serverCancelled.get()
     assertThrows<CancellationException> {
       requests.tryOffer1(helloRequest("John"))
     }
@@ -206,7 +210,7 @@ class GeneratedCodeTest : AbstractCallsTest() {
   fun simpleServerStreamingRpc() = runBlocking {
     val channel = makeChannel(object : GreeterCoroutineImplBase() {
       override fun serverStreamSayHello(request: MultiHelloRequest): Stream<HelloReply> {
-        return Stream(request.nameList).map { helloReply("Hello, $it") }
+        return Stream.iterable(request.nameList).map { helloReply("Hello, $it") }
       }
     })
 
@@ -226,15 +230,15 @@ class GeneratedCodeTest : AbstractCallsTest() {
 
   @Test
   fun serverStreamingRpcCancellation() = runBlocking {
-    val serverCancelled = ForkConnected { }
-    val serverReceived = ForkConnected { }
+    val serverCancelled = Promise<ExitCase>()
+    val serverReceived = Promise<Unit>()
 
     val channel = makeChannel(object : GreeterCoroutineImplBase() {
       override fun serverStreamSayHello(request: MultiHelloRequest): Stream<HelloReply> {
         return Stream.effect {
-          serverReceived.join()
-          suspendUntilCancelled {
-            serverCancelled.join()
+          serverReceived.complete(Unit)
+          guaranteeCase({ never<HelloReply>() }) { case ->
+            serverCancelled.complete(case)
           }
         }
       }
@@ -243,9 +247,9 @@ class GeneratedCodeTest : AbstractCallsTest() {
     val response = GreeterArrowCoroutineStub(channel).serverStreamSayHello(
       multiHelloRequest("Topaz", "Aquamarine")
     ).produceIn()
-    serverReceived.join()
+    serverReceived.get()
     //response.cancel()
-    serverCancelled.join()
+    serverCancelled.get()
   }
 
   @Test
@@ -291,14 +295,16 @@ class GeneratedCodeTest : AbstractCallsTest() {
 
   @Test
   fun serverScopeCancelledDuringRpc() = runBlocking {
-    val serverJob = ForkConnected { }
-    val serverReceived = ForkConnected { }
+    val serverJob = Promise<ExitCase>()
+    val serverReceived = Promise<Unit>()
     val channel = makeChannel(
       // TODO: do we need to pass the context to GreeterCoroutineImplBase(serverJob)
       object : GreeterCoroutineImplBase() {
         override suspend fun sayHello(request: HelloRequest): HelloReply {
-          serverReceived.join()
-          suspendUntilCancelled { /* do nothing */ }
+          serverReceived.complete(Unit)
+          return guaranteeCase({ never<HelloReply>() }) { case ->
+            serverJob.complete(case)
+          }
         }
       }
     )
@@ -310,23 +316,25 @@ class GeneratedCodeTest : AbstractCallsTest() {
       }
       assertThat(ex.status.code).isEqualTo(Status.Code.CANCELLED)
     }
-    serverReceived.join()
-    serverJob.cancel()
+    serverReceived.get()
+    serverJob.get()
     test.join()
   }
 
   @Test
   fun serverScopeCancelledBeforeRpc() = runBlocking {
-    val serverJob = ForkConnected { }
+    val serverJob = Promise<ExitCase>()
     val channel = makeChannel(
       object : GreeterCoroutineImplBase() {
         override suspend fun sayHello(request: HelloRequest): HelloReply {
-          suspendUntilCancelled { /* do nothing */ }
+          return guaranteeCase({ never<HelloReply>() }) { case ->
+            serverJob.complete(case)
+          }
         }
       }
     )
 
-    serverJob.cancel()
+    serverJob.get()
     val stub = GreeterArrowCoroutineStub(channel)
     val ex = assertThrows<StatusException> {
       stub.sayHello(helloRequest("Greg"))

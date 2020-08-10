@@ -17,10 +17,7 @@
 package io.grpc.kotlin
 
 import arrow.fx.coroutines.Environment
-import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.IOPool
-import arrow.fx.coroutines.stream.concurrent.Enqueue
-import arrow.fx.coroutines.stream.concurrent.Queue
 import com.google.common.util.concurrent.MoreExecutors
 import io.grpc.BindableService
 import io.grpc.Context
@@ -43,7 +40,7 @@ import io.grpc.testing.GrpcCleanupRule
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
-import java.util.concurrent.CancellationException
+import org.junit.rules.Timeout
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -66,33 +63,6 @@ abstract class AbstractCallsTest {
       GreeterGrpc.getBidiStreamSayHelloMethod()
     val greeterService: ServiceDescriptor = GreeterGrpc.getServiceDescriptor()
 
-    suspend fun <E> produce(
-      block: suspend Enqueue<E>.() -> Unit
-    ): Queue<E> {
-      val queue = Queue.unbounded<E>()
-      ForkConnected {
-        queue.block()
-      }
-      return queue
-    }
-
-    suspend fun suspendForever(): Nothing {
-      suspendUntilCancelled {
-        // do nothing
-      }
-    }
-
-    suspend fun suspendUntilCancelled(onCancelled: suspend (CancellationException) -> Unit): Nothing {
-      val deferred = UnsafePromise<Unit>()
-      try {
-        deferred.join()
-      } catch (c: CancellationException) {
-        onCancelled(c)
-        throw c
-      }
-      throw AssertionError("Unreachable")
-    }
-
     fun whenContextIsCancelled(onCancelled: suspend () -> Unit) {
       Context.current().withCancellation().addListener(
         Context.CancellationListener { suspend { onCancelled() } },
@@ -101,8 +71,8 @@ abstract class AbstractCallsTest {
     }
   }
 
-//  @get:Rule
-//  val timeout = CoroutinesTimeout.seconds(10)
+  @get:Rule
+  var globalTimeout: Timeout = Timeout.seconds(10) // 10 seconds max per method tested
 
   // We want the coroutines timeout to come first, because it comes with useful debug logs.
   @get:Rule

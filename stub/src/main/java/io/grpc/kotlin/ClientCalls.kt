@@ -301,7 +301,7 @@ object ClientCalls {
       responses
         .dequeue()
         // Close stream when latch is completed
-        .interruptWhen { Either.Right(latch.join()) }
+        .stopWhen { !latch.isEmpty() }
         .effectTap { clientCall.request(1) }
     }.concurrently(
       effect {

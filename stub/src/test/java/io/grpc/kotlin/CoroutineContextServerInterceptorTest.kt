@@ -21,10 +21,6 @@ import io.grpc.Metadata as GrpcMetadata
 @RunWith(JUnit4::class)
 class CoroutineContextServerInterceptorTest : AbstractCallsTest() {
 
-  @get:Rule
-  var globalTimeout: Timeout =
-    Timeout.seconds(5) // 10 seconds max per method tested
-
   class ArbitraryContextElement(val message: String = "") : CoroutineContext.Element {
     companion object Key : CoroutineContext.Key<ArbitraryContextElement>
     override val key: CoroutineContext.Key<*>
