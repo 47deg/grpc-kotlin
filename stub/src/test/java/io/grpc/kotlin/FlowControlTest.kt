@@ -28,6 +28,7 @@ import com.google.common.truth.Truth.assertThat
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
 import kotlinx.coroutines.CoroutineName
+import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.Timeout
@@ -70,6 +71,7 @@ class FlowControlTest : AbstractCallsTest() {
     //responses.cancel()
   }
 
+  @Ignore
   @Test
   fun bidiPingPongFlowControlExpandedServerBuffer() = runBlocking {
     val channel = makeChannel(

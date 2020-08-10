@@ -61,23 +61,24 @@ class TestServiceImpl(
 
   override fun streamingOutputCall(
     request: Messages.StreamingOutputCallRequest
-  ): Stream<Messages.StreamingOutputCallResponse> =
-    Stream.effect<Messages.StreamingOutputCallResponse> {
-      var offset = 0
-      Stream.iterable(request.responseParametersList)
-        .map { params: Messages.ResponseParameters ->
-          //sleep(params.intervalUs.milliseconds)
-          val offsetPayload = offset
-          offset += params.size
-          offset %= compressableBuffer.size()
+  ): Stream<Messages.StreamingOutputCallResponse> {
+    var offset = 0
+    return Stream.iterable(request.responseParametersList)
+      .flatMap { params: Messages.ResponseParameters ->
+        //sleep(params.intervalUs.milliseconds)
+        val offsetPayload = offset
+        offset += params.size
+        offset %= compressableBuffer.size()
+        Stream(
           Messages.StreamingOutputCallResponse
             .newBuilder()
             .apply {
               payload = generatePayload(compressableBuffer, offsetPayload, params.size)
             }
             .build()
-        }.compile().lastOrError()
-    }
+        )
+      }
+  }
 
   override suspend fun streamingInputCall(
     requests: Stream<Messages.StreamingInputCallRequest>
