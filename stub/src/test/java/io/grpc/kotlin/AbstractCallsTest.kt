@@ -83,7 +83,7 @@ abstract class AbstractCallsTest {
     }
 
     suspend fun suspendUntilCancelled(onCancelled: suspend (CancellationException) -> Unit): Nothing {
-      val deferred = ForkConnected { }
+      val deferred = UnsafePromise<Unit>()
       try {
         deferred.join()
       } catch (c: CancellationException) {

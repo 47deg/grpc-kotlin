@@ -15,10 +15,8 @@
  */
 package io.grpc.testing.integration
 
-import arrow.fx.coroutines.milliseconds
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.compile
-import arrow.fx.coroutines.stream.flatten
 import com.google.protobuf.ByteString
 import io.grpc.ForwardingServerCall
 import io.grpc.Metadata
@@ -66,25 +64,20 @@ class TestServiceImpl(
   ): Stream<Messages.StreamingOutputCallResponse> =
     Stream.effect<Messages.StreamingOutputCallResponse> {
       var offset = 0
-      request.responseParametersList.map { params ->
-        Stream.unit.delayBy(params.intervalUs.toLong().milliseconds)
-          .effectMap {
-            Messages.StreamingOutputCallResponse
-              .newBuilder()
-              .apply {
-                payload = generatePayload(compressableBuffer, offset, params.size)
-              }
-              .build()
-          }.map {
-            offset += params.size
-            offset %= compressableBuffer.size()
-            it
-            // FIXME
-          }.compile().lastOrError()
-        // FIXME
-      }.last()
+      Stream.iterable(request.responseParametersList)
+        .map { params: Messages.ResponseParameters ->
+          //sleep(params.intervalUs.milliseconds)
+          val offsetPayload = offset
+          offset += params.size
+          offset %= compressableBuffer.size()
+          Messages.StreamingOutputCallResponse
+            .newBuilder()
+            .apply {
+              payload = generatePayload(compressableBuffer, offsetPayload, params.size)
+            }
+            .build()
+        }.compile().lastOrError()
     }
-
 
   override suspend fun streamingInputCall(
     requests: Stream<Messages.StreamingInputCallRequest>
@@ -112,10 +105,7 @@ class TestServiceImpl(
   override fun halfDuplexCall(
     requests: Stream<Messages.StreamingOutputCallRequest>
   ): Stream<Messages.StreamingOutputCallResponse> =
-    Stream.effect {
-      val requestList = requests.compile().toList()
-      Stream.iterable(requestList).flatMap { streamingOutputCall(it) }
-    }.flatten()
+    requests.flatMap { streamingOutputCall(it) }
 
   companion object {
     /** Returns interceptors necessary for full service implementation.  */

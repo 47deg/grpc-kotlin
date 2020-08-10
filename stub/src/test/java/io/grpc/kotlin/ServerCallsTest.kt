@@ -836,7 +836,7 @@ class ServerCallsTest : AbstractCallsTest() {
 //          val thirdSend: Fiber<Unit> = ForkConnected {
 //            queue.enqueue1(helloReply("3rd"))
 //          }
-//          Stream.unit.delayBy(200.milliseconds).compile().drain() // ?
+//          sleep(200.milliseconds)
 //          // assertThat(thirdSend.isCompleted).isFalse() // Fiber doesn't have isCompleted flag
 //          receiveFirstMessage.cancel()
 //          receivedFirstMessage.join()

@@ -18,6 +18,7 @@ package io.grpc.testing.integration
 import arrow.fx.coroutines.Environment
 import arrow.fx.coroutines.Promise
 import arrow.fx.coroutines.milliseconds
+import arrow.fx.coroutines.sleep
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
@@ -395,7 +396,7 @@ abstract class AbstractInteropTest {
       val firstResponse = stub.unaryCall(request)
       // Increase the chance of all servers are connected, in case the channel should be doing
       // round_robin instead.
-      Stream.unit.delayBy(5000.milliseconds) // delay(5000)
+      sleep(5000.milliseconds)
       for (i in 0..99) {
         val response = stub.unaryCall(request)
         assertThat(response.serverId).isEqualTo(firstResponse.serverId)

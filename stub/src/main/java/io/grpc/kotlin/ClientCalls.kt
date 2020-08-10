@@ -303,10 +303,12 @@ object ClientCalls {
         // Close stream when latch is completed
         .interruptWhen { Either.Right(latch.join()) }
         .effectTap { clientCall.request(1) }
-    }.concurrently(effect {
-      request.sendTo(clientCall, readiness)
-      clientCall.halfClose()
-    }).onFinalizeCase { ex ->
+    }.concurrently(
+      effect {
+        request.sendTo(clientCall, readiness)
+        clientCall.halfClose()
+      }
+    ).onFinalizeCase { ex ->
       println("ClientCalls.onFinalizeCase: $ex")
       when (ex) {
         is ExitCase.Cancelled -> clientCall.cancel("Collection of requests was cancelled", null)

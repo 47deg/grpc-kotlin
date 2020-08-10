@@ -19,17 +19,20 @@ package io.grpc.kotlin
 import arrow.fx.coroutines.Environment
 import com.google.common.truth.Truth.assertThat
 import io.grpc.Context
-import org.junit.Ignore
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.Timeout
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
-@Ignore
 @RunWith(JUnit4::class)
 class GrpcContextElementTest {
   val testKey = Context.key<String>("test")
+
+  @get:Rule
+  var globalTimeout: Timeout = Timeout.seconds(5) // 10 seconds max per method tested
 
   // TODO: context propagation vs Scope ?
   @Test
