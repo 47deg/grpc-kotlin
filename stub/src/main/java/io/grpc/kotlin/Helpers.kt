@@ -81,7 +81,7 @@ internal fun <O> Stream<O>.singleOrStatusStream(expected: String, descriptor: An
 internal suspend fun <T> Stream<T>.singleOrStatus(
   expected: String,
   descriptor: Any
-): T = singleOrStatusStream(expected, descriptor).take(1).compile().lastOrNull()!!
+): T = singleOrStatusStream(expected, descriptor).first().compile().lastOrNull()!!
 
 suspend fun <T> Stream<T>.produceIn(): Queue<T> {
   val queue = Queue.unbounded<T>()

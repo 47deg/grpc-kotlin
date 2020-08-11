@@ -302,13 +302,10 @@ object ClientCalls {
         .dequeue()
         // Close stream when latch is completed
         .interruptWhen {
-          val status = latch.join()
-          if (status.isOk)
-            Either.Right(Unit)
-          else
-            Either.Left(status.asException())
+          latch.join().let { status ->
+            if (status.isOk) Either.Right(Unit) else Either.Left(status.asException())
+          }
         }
-//        .stopWhen { !latch.isEmpty() }
         .effectTap { clientCall.request(1) }
     }.concurrently(
       effect {
@@ -320,7 +317,10 @@ object ClientCalls {
       when (ex) {
         is ExitCase.Cancelled -> clientCall.cancel("Collection of requests was cancelled", null)
         is ExitCase.Failure -> clientCall.cancel("Collection of requests completed exceptionally", ex.failure)
-        else -> Unit
+        else -> {
+          latch.join()
+          Unit
+        }
       }
     }
   }.flatten()
