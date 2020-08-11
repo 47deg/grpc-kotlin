@@ -272,7 +272,7 @@ object ClientCalls {
     val responses = Queue.unsafeBounded<ResponseT>(1)
     val readiness = Readiness { clientCall.isReady }
 
-    val latch = UnsafePromise<Unit>()
+    val latch = UnsafePromise<Status>()
 
     clientCall.start(
       object : ClientCall.Listener<ResponseT>() {
@@ -284,7 +284,7 @@ object ClientCalls {
 
         override fun onClose(status: Status, trailersMetadata: GrpcMetadata?) {
           println("ClientCall.Listener.onClose($status, $trailersMetadata)")
-          latch.complete(Result.success(Unit))
+          latch.complete(Result.success(status))
         }
 
         override fun onReady() {
@@ -301,7 +301,14 @@ object ClientCalls {
       responses
         .dequeue()
         // Close stream when latch is completed
-        .stopWhen { !latch.isEmpty() }
+        .interruptWhen {
+          val status = latch.join()
+          if (status.isOk)
+            Either.Right(Unit)
+          else
+            Either.Left(status.asException())
+        }
+//        .stopWhen { !latch.isEmpty() }
         .effectTap { clientCall.request(1) }
     }.concurrently(
       effect {

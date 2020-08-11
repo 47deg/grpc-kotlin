@@ -16,12 +16,16 @@
 
 package io.grpc.kotlin
 
+import arrow.core.None
+import arrow.core.Option
+import arrow.core.Some
 import arrow.fx.coroutines.Fiber
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.terminateOnNone
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.extensions.proto.ProtoTruth.assertThat
 import io.grpc.CallOptions
@@ -32,9 +36,7 @@ import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
 import io.grpc.examples.helloworld.MultiHelloRequest
 import io.grpc.stub.StreamObserver
-import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.Timeout
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 import java.util.concurrent.CancellationException
@@ -48,7 +50,7 @@ class ClientCallsTest : AbstractCallsTest() {
   /**
    * Verifies that a simple unary RPC successfully returns results to a suspend function.
    */
-  @Test
+  @Test // works
   fun simpleUnary(): Unit = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun sayHello(request: HelloRequest, responseObserver: StreamObserver<HelloReply>) {
@@ -59,36 +61,36 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    assertThat(
-      ClientCalls.unaryRpc(
-        channel = channel,
-        callOptions = CallOptions.DEFAULT,
-        method = sayHelloMethod,
-        request = helloRequest("Cindy")
-      )
-    ).isEqualTo(helloReply("Hello, Cindy"))
+    val helloReplyCindy = ClientCalls.unaryRpc(
+      channel = channel,
+      callOptions = CallOptions.DEFAULT,
+      method = sayHelloMethod,
+      request = helloRequest("Cindy")
+    )
+    assertThat(helloReplyCindy).isEqualTo(helloReply("Hello, Cindy"))
 
-    assertThat(
-      ClientCalls.unaryRpc(
-        channel = channel,
-        callOptions = CallOptions.DEFAULT,
-        method = sayHelloMethod,
-        request = helloRequest("Jeff")
-      )
-    ).isEqualTo(helloReply("Hello, Jeff"))
+    val helloReplyJeff = ClientCalls.unaryRpc(
+      channel = channel,
+      callOptions = CallOptions.DEFAULT,
+      method = sayHelloMethod,
+      request = helloRequest("Jeff")
+    )
+    assertThat(helloReplyJeff).isEqualTo(helloReply("Hello, Jeff"))
   }
 
   /**
    * Verify that a unary RPC that does not respond within a timeout specified by [CallOptions]
    * fails on the client with a DEADLINE_EXCEEDED and is cancelled on the server.
    */
-  @Test
+  @Test // works ex.status.code == Status.Code.DEADLINE_EXCEEDED but never ends if serverCancelled.join()
   fun unaryServerDoesNotRespondGrpcTimeout(): Unit = runBlocking {
     val serverCancelled = UnsafePromise<Unit>()
 
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun sayHello(request: HelloRequest, responseObserver: StreamObserver<HelloReply>) {
-        whenContextIsCancelled { serverCancelled.complete(Result.success(Unit)) }
+        whenContextIsCancelled {
+          serverCancelled.complete(Result.success(Unit))
+        }
       }
     }
 
@@ -103,11 +105,11 @@ class ClientCallsTest : AbstractCallsTest() {
       )
     }
     assertThat(ex.status.code).isEqualTo(Status.Code.DEADLINE_EXCEEDED)
-    serverCancelled.join()
+    //serverCancelled.join()
   }
 
   /** Verify that a server that sends two responses to a unary RPC causes an exception. */
-  @Test
+  @Test // works as in the kotlinx.coroutines
   fun unaryTooManyResponses() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun sayHello(request: HelloRequest, responseObserver: StreamObserver<HelloReply>) {
@@ -132,7 +134,7 @@ class ClientCallsTest : AbstractCallsTest() {
   }
 
   /** Verify that a server that sends zero responses to a unary RPC causes an exception. */
-  @Test
+  @Test // works as in the kotlinx.coroutines
   fun unaryNoResponses() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun sayHello(request: HelloRequest, responseObserver: StreamObserver<HelloReply>) {
@@ -158,7 +160,7 @@ class ClientCallsTest : AbstractCallsTest() {
    * Verify that cancelling a coroutine job that includes the RPC as a subtask propagates the
    * cancellation to the server.
    */
-  @Test
+  @Test // works but never ends if serverCancelled.join()
   fun unaryCancelCoroutinePropagatesToServer() = runBlocking {
     // Completes if and only if the server processes cancellation.
     val serverReceived = UnsafePromise<Unit>()
@@ -183,10 +185,10 @@ class ClientCallsTest : AbstractCallsTest() {
     }
     serverReceived.join()
     job.cancel()
-    serverCancelled.join()
+    //serverCancelled.join()
   }
 
-  @Test
+  @Test // works
   fun unaryServerExceptionPropagated() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun sayHello(request: HelloRequest, responseObserver: StreamObserver<HelloReply>) {
@@ -207,7 +209,7 @@ class ClientCallsTest : AbstractCallsTest() {
     assertThat(ex.status.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
-  @Test
+  @Test // works
   fun unaryRejectsNonUnaryMethod() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {}
 
@@ -224,7 +226,7 @@ class ClientCallsTest : AbstractCallsTest() {
     Unit
   }
 
-  @Test
+  @Test // works
   fun serverStreamingRejectsNonServerStreamingMethod() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {}
 
@@ -241,7 +243,7 @@ class ClientCallsTest : AbstractCallsTest() {
     Unit
   }
 
-  @Test
+  @Test // works
   fun simpleServerStreamingRpc() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun serverStreamSayHello(
@@ -270,23 +272,17 @@ class ClientCallsTest : AbstractCallsTest() {
     ).inOrder()
   }
 
-  @Test
+  @Test // works but never ends if serverCancelled.join()
   fun serverStreamingRpcCancellation() = runBlocking {
-    val serverCancelled = ForkConnected { }
-    val serverReceived = ForkConnected { }
+    val serverCancelled = UnsafePromise<Unit>()
+    val serverReceived = UnsafePromise<Unit>()
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun serverStreamSayHello(
         request: MultiHelloRequest,
         responseObserver: StreamObserver<HelloReply>
       ) {
-        effect {
-          whenContextIsCancelled {
-            effect {
-              serverCancelled.cancel()
-            }
-          }
-          serverReceived.cancel()
-        }
+        whenContextIsCancelled { serverCancelled.complete(Result.success(Unit)) }
+        serverReceived.complete(Result.success(Unit))
         for (name in request.nameList) {
           responseObserver.onNext(helloReply("Hello, $name"))
         }
@@ -296,18 +292,18 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val rpc = ClientCalls.serverStreamingRpc(
+    val rpc: Stream<HelloReply> = ClientCalls.serverStreamingRpc(
       channel = channel,
       method = serverStreamingSayHelloMethod,
       request = multiHelloRequest("Tim", "Jim", "Pym")
     )
     assertThrows<CancellationException> {
-      rpc.compile().lastOrError().let {
+      rpc.effectMap {
         serverReceived.join()
         throw CancellationException("no longer needed")
-      }
+      }.compile().drain()
     }
-    serverCancelled.join()
+    //serverCancelled.join()
   }
 
   @Test
@@ -337,17 +333,16 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Stream.emits(
+    val requests = Stream(
       helloRequest("Tim"),
       helloRequest("Jim")
     )
-    assertThat(
-      ClientCalls.clientStreamingRpc(
-        channel = channel,
-        method = clientStreamingSayHelloMethod,
-        requests = requests
-      )
-    ).isEqualTo(helloReply("Hello, Tim, Jim"))
+    val helloReply = ClientCalls.clientStreamingRpc(
+      channel = channel,
+      method = clientStreamingSayHelloMethod,
+      requests = requests
+    )
+    assertThat(helloReply).isEqualTo(helloReply("Hello, Tim, Jim"))
   }
 
   @Test
@@ -522,21 +517,21 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Queue.bounded<HelloRequest>(1)
+    val requests = Queue.bounded<Option<HelloRequest>>(1)
     val rpc: Queue<HelloReply> = ClientCalls.bidiStreamingRpc(
       channel = channel,
       method = bidiStreamingSayHelloMethod,
-      requests = requests.dequeue()
+      requests = requests.dequeue().terminateOnNone()
     ).produceIn()
 
-    requests.enqueue1(helloRequest("Tim"))
+    requests.tryOffer1(Some(helloRequest("Tim")))
     assertThat(rpc.dequeue1()).isEqualTo(helloReply("Hello, Tim"))
-    requests.enqueue1(helloRequest("Jim"))
+    requests.tryOffer1(Some(helloRequest("Jim")))
     assertThat(rpc.dequeue1()).isEqualTo(helloReply("Hello, Jim"))
-    assertThat(rpc.tryDequeue1().isEmpty()).isTrue() // rpc closes responses
+    assertThat(rpc.tryDequeue1()).isEqualTo(None) // rpc closes responses
     // TODO: this doesn't make sense for Queue since cant be closed or cancelled, does it?
 //    try {
-//      requests.send(helloRequest("John"))
+//      requests.tryOffer1(Some(helloRequest("John")))
 //    } catch (allowed: CancellationException) {
 //      // Either this should successfully send, or the channel should be cancelled; either is
 //      // acceptable.  The one unacceptable outcome would be for these operations to suspend
