@@ -278,6 +278,7 @@ class ServerCallsTest : AbstractCallsTest() {
     val ex = assertThrows<StatusRuntimeException> {
       stub.sayHello(helloRequest("Lapis Lazuli"))
     }
+    println("ex.status.code: ${ex.status.code}")
     assertThat(ex.status.code).isEqualTo(Status.Code.UNKNOWN)
   }
 

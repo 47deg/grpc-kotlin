@@ -16,6 +16,7 @@
 
 package io.grpc.kotlin
 
+import arrow.core.Either
 import arrow.fx.coroutines.Environment
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.stream.Stream
@@ -213,7 +214,7 @@ object ServerCalls {
         .flatMap {
           requestsChannel
             .dequeue() // For every value we receive, we need to request the next one
-            .stopWhen { !isActive.isEmpty() }
+            .interruptWhen { Either.Right(isActive.join()) }
             .effectTap { call.request(1) }
         }.onFinalizeCase { ex ->
           println("ServerCall.Requests.onFinalizeCase: $ex")

@@ -66,6 +66,7 @@ class ClientCallsTest : AbstractCallsTest() {
       method = sayHelloMethod,
       request = helloRequest("Cindy")
     )
+    println(helloReplyCindy)
     assertThat(helloReplyCindy).isEqualTo(helloReply("Hello, Cindy"))
 
     val helloReplyJeff = ClientCalls.unaryRpc(
@@ -74,6 +75,7 @@ class ClientCallsTest : AbstractCallsTest() {
       method = sayHelloMethod,
       request = helloRequest("Jeff")
     )
+    println(helloReplyJeff)
     assertThat(helloReplyJeff).isEqualTo(helloReply("Hello, Jeff"))
   }
 

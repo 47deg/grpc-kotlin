@@ -72,7 +72,7 @@ abstract class AbstractCallsTest {
   }
 
   @get:Rule
-  var globalTimeout: Timeout = Timeout.seconds(10) // 10 seconds max per method tested
+  var globalTimeout: Timeout = Timeout.seconds(4) // 10 seconds max per method tested
 
   // We want the coroutines timeout to come first, because it comes with useful debug logs.
   @get:Rule
