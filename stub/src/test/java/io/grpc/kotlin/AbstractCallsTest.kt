@@ -63,9 +63,9 @@ abstract class AbstractCallsTest {
       GreeterGrpc.getBidiStreamSayHelloMethod()
     val greeterService: ServiceDescriptor = GreeterGrpc.getServiceDescriptor()
 
-    fun whenContextIsCancelled(onCancelled: suspend () -> Unit) {
+    fun whenContextIsCancelled(onCancelled: () -> Unit) {
       Context.current().withCancellation().addListener(
-        Context.CancellationListener { suspend { onCancelled() } },
+        Context.CancellationListener { onCancelled() },
         MoreExecutors.directExecutor()
       )
     }

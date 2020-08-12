@@ -253,6 +253,9 @@ object ServerCalls {
       override fun onCancel() {
         println("ServerCall.Listener.onCancel()")
         rpcCancelToken.invoke()
+        // TODO promise have to be completed?
+        if (isActive.isEmpty())
+          isActive.complete(Result.failure(CancellationException()))
       }
 
       override fun onMessage(message: RequestT) {

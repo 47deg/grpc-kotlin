@@ -59,9 +59,9 @@ class FlowControlTest : AbstractCallsTest() {
         requests = requests.dequeue(),
         method = bidiStreamingSayHelloMethod
       ).produceUnbuffered()
-    requests.tryOffer1(helloRequest("Garnet"))
-    requests.tryOffer1(helloRequest("Amethyst"))
-    val third = ForkConnected { requests.tryOffer1(helloRequest("Steven")) }
+    requests.enqueue1(helloRequest("Garnet"))
+    requests.enqueue1(helloRequest("Amethyst"))
+    val third = ForkConnected { requests.enqueue1(helloRequest("Steven")) }
     sleep(200.milliseconds)
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet"))
     third.join() // pulling one element allows the cycle to advance
@@ -87,10 +87,10 @@ class FlowControlTest : AbstractCallsTest() {
       requests = requests.dequeue(),
       method = bidiStreamingSayHelloMethod
     ).produceUnbuffered()
-    requests.tryOffer1(helloRequest("Garnet"))
-    requests.tryOffer1(helloRequest("Amethyst"))
-    requests.tryOffer1(helloRequest("Pearl"))
-    val fourth = ForkConnected { requests.tryOffer1(helloRequest("Pearl")) }
+    requests.enqueue1(helloRequest("Garnet"))
+    requests.enqueue1(helloRequest("Amethyst"))
+    requests.enqueue1(helloRequest("Pearl"))
+    val fourth = ForkConnected { requests.enqueue1(helloRequest("Pearl")) }
     sleep(200.milliseconds)
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet"))
     fourth.join() // pulling one element allows the cycle to advance
@@ -135,16 +135,16 @@ class FlowControlTest : AbstractCallsTest() {
       requests = requests.dequeue(),
       method = bidiStreamingSayHelloMethod
     ).produceUnbuffered()
-    requests.tryOffer1(helloRequest("Garnet"))
-    requests.tryOffer1(helloRequest("Amethyst"))
-    requests.tryOffer1(helloRequest("Pearl"))
-    requests.tryOffer1(helloRequest("Steven"))
-    val fourth = ForkConnected { requests.tryOffer1(helloRequest("Onion")) }
+    requests.enqueue1(helloRequest("Garnet"))
+    requests.enqueue1(helloRequest("Amethyst"))
+    requests.enqueue1(helloRequest("Pearl"))
+    requests.enqueue1(helloRequest("Steven"))
+    val fourth = ForkConnected { requests.enqueue1(helloRequest("Onion")) }
     sleep(300.milliseconds)
     //assertThat(fourth.isCompleted).isFalse()
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet and Amethyst"))
     fourth.join() // pulling one element allows the cycle to advance
-    requests.tryOffer1(helloRequest("Rainbow 2.0"))
+    requests.enqueue1(helloRequest("Rainbow 2.0"))
     //requests.close()
     assertThat(
       responses.dequeue().compile().toList()
@@ -175,8 +175,8 @@ class FlowControlTest : AbstractCallsTest() {
       requests = requests.dequeue(),
       method = bidiStreamingSayHelloMethod
     ).produceUnbuffered()
-    requests.tryOffer1(helloRequest("Garnet"))
-    val second = ForkConnected { requests.tryOffer1(helloRequest("Pearl")) }
+    requests.enqueue1(helloRequest("Garnet"))
+    val second = ForkConnected { requests.enqueue1(helloRequest("Pearl")) }
     sleep(200.milliseconds)
     //assertThat(second.isCompleted).isFalse()
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet"))

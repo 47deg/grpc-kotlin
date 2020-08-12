@@ -182,12 +182,12 @@ class GeneratedCodeTest : AbstractCallsTest() {
     val response = ForkConnected {
       stub.clientStreamSayHello(requests.dequeue())
     }
-    requests.tryOffer1(helloRequest("Aquamarine"))
+    requests.enqueue1(helloRequest("Aquamarine"))
     serverReceived.get()
     response.cancel()
     serverCancelled.get()
     assertThrows<CancellationException> {
-      requests.tryOffer1(helloRequest("John"))
+      requests.enqueue1(helloRequest("John"))
     }
   }
 
@@ -263,9 +263,9 @@ class GeneratedCodeTest : AbstractCallsTest() {
     val requests = Queue.unsafeUnbounded<HelloRequest>()
     val responses = GreeterArrowCoroutineStub(channel).bidiStreamSayHello(requests.dequeue()).produceIn()
 
-    requests.tryOffer1(helloRequest("Steven"))
+    requests.enqueue1(helloRequest("Steven"))
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Steven"))
-    requests.tryOffer1(helloRequest("Garnet"))
+    requests.enqueue1(helloRequest("Garnet"))
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet"))
     //requests.close()
     assertThat(responses.dequeue().compile().toList()).isEmpty()
@@ -282,13 +282,13 @@ class GeneratedCodeTest : AbstractCallsTest() {
     val stub = GreeterArrowCoroutineStub(channel)
     val requests = Queue.unsafeUnbounded<HelloRequest>()
     val responses = stub.bidiStreamSayHello(requests.dequeue()).produceIn()
-    requests.tryOffer1(helloRequest("Peridot"))
+    requests.enqueue1(helloRequest("Peridot"))
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Peridot"))
-    requests.tryOffer1(helloRequest("Lapis"))
+    requests.enqueue1(helloRequest("Lapis"))
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Lapis"))
     assertThat(responses.dequeue().compile().toList()).isEmpty()
     try {
-      requests.tryOffer1(helloRequest("Jasper"))
+      requests.enqueue1(helloRequest("Jasper"))
     } catch (allowed: CancellationException) {
     }
   }

@@ -1045,14 +1045,14 @@ abstract class AbstractInteropTest {
 
       val responses = stub.fullDuplexCall(requestChannel.dequeue()).produceIn()
 
-      requestChannel.tryOffer1(requests[0])
+      requestChannel.enqueue1(requests[0])
       assertResponse(goldenResponses[0], responses.dequeue1())
       // Initiate graceful shutdown.
       channel.shutdown()
-      requestChannel.tryOffer1(requests[1])
+      requestChannel.enqueue1(requests[1])
       assertResponse(goldenResponses[1], responses.dequeue1())
       // The previous ping-pong could have raced with the shutdown, but this one certainly shouldn't.
-      requestChannel.tryOffer1(requests[2])
+      requestChannel.enqueue1(requests[2])
       assertResponse(goldenResponses[2], responses.dequeue1())
       // assertFalse(responses.isClosedForReceive) TODO replacement of this?
       // requestChannel.close()

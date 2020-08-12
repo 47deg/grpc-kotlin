@@ -65,7 +65,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
   val context = CoroutineName("server context")
 
-  @Test // debugging works, race condition?
+  @Test // works
   fun simpleUnaryMethod() = runBlocking {
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) { request: HelloRequest ->
@@ -79,7 +79,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(stub.sayHello(helloRequest("Pearl"))).isEqualTo(helloReply("Hello, Pearl"))
   }
 
-  @Test
+  @Test // works
   fun unaryMethodCancellationPropagatedToServer() = runBlocking {
     val request = Promise<HelloRequest>()
     val cancelled = Promise<ExitCase>()
@@ -314,7 +314,7 @@ class ServerCallsTest : AbstractCallsTest() {
         serverStreamingSayHelloMethod
       ) {
         Stream.effect {
-          requestReceived.get()
+          requestReceived.complete(Unit)
           guaranteeCase({ never<HelloReply>() }) { case ->
             cancelled.complete(case)
           }
@@ -463,7 +463,7 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     )
 
-    val requestChannel: Stream<HelloRequest> = Stream(
+    val requestChannel = Stream(
       helloRequest("Ruby"),
       helloRequest("Sapphire")
     )
@@ -519,7 +519,7 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     )
 
-    val requestChannel = Queue.unbounded<HelloRequest>()
+    val requestChannel = Queue.bounded<HelloRequest>(1)
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel,
@@ -527,11 +527,11 @@ class ServerCallsTest : AbstractCallsTest() {
         requestChannel.dequeue()
       )
     }
-    requestChannel.tryOffer1(helloRequest("Lapis"))
-    requestChannel.tryOffer1(helloRequest("Peridot"))
+    requestChannel.enqueue1(helloRequest("Lapis"))
+    requestChannel.enqueue1(helloRequest("Peridot"))
 
     for (i in 1..1000) {
-      requestChannel.tryOffer1(helloRequest("Ruby"))
+      requestChannel.enqueue1(helloRequest("Ruby"))
     }
 
     latch.complete(Unit)

@@ -106,7 +106,7 @@ class ClientCallsTest : AbstractCallsTest() {
       )
     }
     assertThat(ex.status.code).isEqualTo(Status.Code.DEADLINE_EXCEEDED)
-    //serverCancelled.join()
+    serverCancelled.join()
   }
 
   /** Verify that a server that sends two responses to a unary RPC causes an exception. */
@@ -186,7 +186,7 @@ class ClientCallsTest : AbstractCallsTest() {
     }
     serverReceived.join()
     job.cancel()
-    //serverCancelled.join()
+    serverCancelled.join()
   }
 
   @Test // works
@@ -304,7 +304,7 @@ class ClientCallsTest : AbstractCallsTest() {
         throw CancellationException("no longer needed")
       }.compile().drain()
     }
-    //serverCancelled.join()
+    serverCancelled.join()
   }
 
   @Test // fails, missing Tim? "Hello, Tim, Jim" -> "Hello, Jim"
@@ -388,18 +388,11 @@ class ClientCallsTest : AbstractCallsTest() {
         requests = requests.dequeue()
       )
     }
-    requests.tryOffer1(helloRequest("Tim"))
-    requests.tryOffer1(helloRequest("Jim"))
+    requests.enqueue1(helloRequest("Tim"))
+    requests.enqueue1(helloRequest("Jim"))
     val helloReply = response.join()
     assertThat(helloReply).isEqualTo(helloReply("Hello, Tim, Jim"))
-    // Can this ever throw an exception?
-    try {
-      requests.tryOffer1(helloRequest("John"))
-    } catch (allowed: CancellationException) {
-      // Either this should successfully send, or the channel should be cancelled; either is
-      // acceptable.  The one unacceptable outcome would be for these operations to suspend
-      // indefinitely, waiting for them to be sent.
-    }
+    requests.enqueue1(helloRequest("John"))
   }
 
   @Test // fails, never ends
@@ -437,7 +430,7 @@ class ClientCallsTest : AbstractCallsTest() {
         requests = requests.dequeue()
       )
     }
-    requests.tryOffer1(helloRequest("Tim"))
+    requests.enqueue1(helloRequest("Tim"))
     response.cancel()
     response.join()
     // This won't throw any CancellationException
@@ -474,9 +467,9 @@ class ClientCallsTest : AbstractCallsTest() {
       method = bidiStreamingSayHelloMethod,
       requests = requests.dequeue().terminateOnNone()
     ).produceIn()
-    requests.tryOffer1(Some(helloRequest("Tim")))
+    requests.enqueue1(Some(helloRequest("Tim")))
     assertThat(rpc.dequeue1()).isEqualTo(helloReply("Hello, Tim"))
-    requests.tryOffer1(Some(helloRequest("Jim")))
+    requests.enqueue1(Some(helloRequest("Jim")))
     assertThat(rpc.dequeue1()).isEqualTo(helloReply("Hello, Jim"))
     assertThat(rpc.tryDequeue1()).isEqualTo(None) // rpc closes responses
   }
@@ -516,9 +509,9 @@ class ClientCallsTest : AbstractCallsTest() {
       requests = requests.dequeue().terminateOnNone()
     ).produceIn()
 
-    requests.tryOffer1(Some(helloRequest("Tim")))
+    requests.enqueue1(Some(helloRequest("Tim")))
     assertThat(rpc.dequeue1()).isEqualTo(helloReply("Hello, Tim"))
-    requests.tryOffer1(Some(helloRequest("Jim")))
+    requests.enqueue1(Some(helloRequest("Jim")))
     assertThat(rpc.dequeue1()).isEqualTo(helloReply("Hello, Jim"))
     assertThat(rpc.tryDequeue1()).isEqualTo(None) // rpc closes responses
     // TODO: this doesn't make sense for Queue since cant be closed or cancelled, does it?
