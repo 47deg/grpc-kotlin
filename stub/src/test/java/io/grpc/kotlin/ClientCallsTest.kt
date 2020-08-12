@@ -21,7 +21,6 @@ import arrow.core.Option
 import arrow.core.Some
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.Stream.Companion.effect
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.terminateOnNone
@@ -49,7 +48,7 @@ class ClientCallsTest : AbstractCallsTest() {
   /**
    * Verifies that a simple unary RPC successfully returns results to a suspend function.
    */
-  @Test // works
+  @Test // does not receive the last request
   fun simpleUnary(): Unit = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun sayHello(request: HelloRequest, responseObserver: StreamObserver<HelloReply>) {
@@ -60,21 +59,23 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val helloReplyCindy = ClientCalls.unaryRpc(
-      channel = channel,
-      callOptions = CallOptions.DEFAULT,
-      method = sayHelloMethod,
-      request = helloRequest("Cindy")
-    )
+    val helloReplyCindy =
+      ClientCalls.unaryRpc(
+        channel = channel,
+        callOptions = CallOptions.DEFAULT,
+        method = sayHelloMethod,
+        request = helloRequest("Cindy")
+      )
     println(helloReplyCindy)
     assertThat(helloReplyCindy).isEqualTo(helloReply("Hello, Cindy"))
 
-    val helloReplyJeff = ClientCalls.unaryRpc(
-      channel = channel,
-      callOptions = CallOptions.DEFAULT,
-      method = sayHelloMethod,
-      request = helloRequest("Jeff")
-    )
+    val helloReplyJeff =
+      ClientCalls.unaryRpc(
+        channel = channel,
+        callOptions = CallOptions.DEFAULT,
+        method = sayHelloMethod,
+        request = helloRequest("Jeff")
+      )
     println(helloReplyJeff)
     assertThat(helloReplyJeff).isEqualTo(helloReply("Hello, Jeff"))
   }
@@ -83,7 +84,7 @@ class ClientCallsTest : AbstractCallsTest() {
    * Verify that a unary RPC that does not respond within a timeout specified by [CallOptions]
    * fails on the client with a DEADLINE_EXCEEDED and is cancelled on the server.
    */
-  @Test // works ex.status.code == Status.Code.DEADLINE_EXCEEDED but never ends if serverCancelled.join()
+  @Test // works
   fun unaryServerDoesNotRespondGrpcTimeout(): Unit = runBlocking {
     val serverCancelled = UnsafePromise<Unit>()
 
@@ -161,7 +162,7 @@ class ClientCallsTest : AbstractCallsTest() {
    * Verify that cancelling a coroutine job that includes the RPC as a subtask propagates the
    * cancellation to the server.
    */
-  @Test // works but never ends if serverCancelled.join()
+  @Test // works
   fun unaryCancelCoroutinePropagatesToServer() = runBlocking {
     // Completes if and only if the server processes cancellation.
     val serverReceived = UnsafePromise<Unit>()
@@ -244,7 +245,9 @@ class ClientCallsTest : AbstractCallsTest() {
     Unit
   }
 
-  @Test // works
+  // expected: [message: "Hello, Cindy", message: "Hello, Jeff", message: "Hello, Aki"]
+  // missing (1): message: "Hello, Aki"
+  @Test // but executed individually works
   fun simpleServerStreamingRpc() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun serverStreamSayHello(
@@ -273,7 +276,7 @@ class ClientCallsTest : AbstractCallsTest() {
     ).inOrder()
   }
 
-  @Test // works but never ends if serverCancelled.join()
+  @Test // works
   fun serverStreamingRpcCancellation() = runBlocking {
     val serverCancelled = UnsafePromise<Unit>()
     val serverReceived = UnsafePromise<Unit>()
@@ -334,10 +337,8 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Stream(
-      helloRequest("Tim"),
-      helloRequest("Jim")
-    )
+    val requestIterable = listOf<HelloRequest>(helloRequest("Tim"), helloRequest("Jim"))
+    val requests = Stream.iterable(requestIterable)
     val helloReply = ClientCalls.clientStreamingRpc(
       channel = channel,
       method = clientStreamingSayHelloMethod,
@@ -346,7 +347,7 @@ class ClientCallsTest : AbstractCallsTest() {
     assertThat(helloReply).isEqualTo(helloReply("Hello, Tim, Jim"))
   }
 
-  @Test
+  @Test // never ends
   fun clientStreamingRpcReturnsEarly() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun clientStreamSayHello(
@@ -380,7 +381,7 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Queue.unbounded<HelloRequest>()
+    val requests = Queue.synchronous<HelloRequest>()
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel = channel,
@@ -395,7 +396,7 @@ class ClientCallsTest : AbstractCallsTest() {
     requests.enqueue1(helloRequest("John"))
   }
 
-  @Test // fails, never ends
+  @Test // works
   fun clientStreamingRpcCancelled() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun clientStreamSayHello(
@@ -422,7 +423,7 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Queue.unsafeUnbounded<HelloRequest>()
+    val requests = Queue.synchronous<HelloRequest>()
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel = channel,
@@ -432,14 +433,13 @@ class ClientCallsTest : AbstractCallsTest() {
     }
     requests.enqueue1(helloRequest("Tim"))
     response.cancel()
-    response.join()
     // This won't throw any CancellationException
-//    assertThrows<CancellationException> {
-//      requests.tryOffer1(helloRequest("John"))
-//    }
+    // assertThrows<CancellationException> {
+    requests.enqueue1(helloRequest("John"))
+    // }
   }
 
-  @Test
+  @Test // never ends
   fun simpleBidiStreamingRpc() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun bidiStreamSayHello(
@@ -461,7 +461,7 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Queue.bounded<Option<HelloRequest>>(1)
+    val requests = Queue.synchronous<Option<HelloRequest>>()
     val rpc: Queue<HelloReply> = ClientCalls.bidiStreamingRpc(
       channel = channel,
       method = bidiStreamingSayHelloMethod,
@@ -502,7 +502,7 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Queue.bounded<Option<HelloRequest>>(1)
+    val requests = Queue.synchronous<Option<HelloRequest>>()
     val rpc: Queue<HelloReply> = ClientCalls.bidiStreamingRpc(
       channel = channel,
       method = bidiStreamingSayHelloMethod,
@@ -514,14 +514,14 @@ class ClientCallsTest : AbstractCallsTest() {
     requests.enqueue1(Some(helloRequest("Jim")))
     assertThat(rpc.dequeue1()).isEqualTo(helloReply("Hello, Jim"))
     assertThat(rpc.tryDequeue1()).isEqualTo(None) // rpc closes responses
-    // TODO: this doesn't make sense for Queue since cant be closed or cancelled, does it?
-//    try {
-//      requests.tryOffer1(Some(helloRequest("John")))
-//    } catch (allowed: CancellationException) {
-//      // Either this should successfully send, or the channel should be cancelled; either is
-//      // acceptable.  The one unacceptable outcome would be for these operations to suspend
-//      // indefinitely, waiting for them to be sent.
-//    }
+    // Queue cant be closed or cancelled
+    // try {
+    requests.enqueue1(Some(helloRequest("John")))
+    // } catch (allowed: CancellationException) {
+    // Either this should successfully send, or the channel should be cancelled; either is
+    // acceptable.  The one unacceptable outcome would be for these operations to suspend
+    // indefinitely, waiting for them to be sent.
+    // }
   }
 
   @Test // works
@@ -558,7 +558,7 @@ class ClientCallsTest : AbstractCallsTest() {
 
   private class MyException : Exception()
 
-  @Test
+  @Test // works
   fun bidiStreamingRpcCollectsRequestsEachTime() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun bidiStreamSayHello(
@@ -580,7 +580,7 @@ class ClientCallsTest : AbstractCallsTest() {
     channel = makeChannel(serverImpl)
 
     val requestsEvaluations = AtomicInteger()
-    val requests = effect {
+    val requests = Stream.effect {
       requestsEvaluations.incrementAndGet()
       helloRequest("Sunstone")
     }

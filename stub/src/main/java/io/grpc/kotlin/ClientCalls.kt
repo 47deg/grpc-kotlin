@@ -300,8 +300,7 @@ object ClientCalls {
     }.flatMap {
       responses
         .dequeue()
-        // Close stream when latch is completed
-        .interruptWhen {
+        .interruptWhen { // Close stream when latch is completed
           latch.join().let { status ->
             if (status.isOk) Either.Right(Unit) else Either.Left(status.asException())
           }
