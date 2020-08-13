@@ -240,10 +240,10 @@ object ClientCalls {
         readiness: Readiness
       ) {
         readiness.suspendUntilReady()
-        requestStream.compile().lastOrError().let { request: RequestT ->
+        requestStream.effectMap { request: RequestT ->
           clientCall.sendMessage(request)
           readiness.suspendUntilReady()
-        }
+        }.compile().drain()
       }
     }
   }
@@ -261,6 +261,7 @@ object ClientCalls {
     headers: GrpcMetadata,
     request: Request<RequestT>
   ): Stream<ResponseT> = effect {
+
     val clientCall: ClientCall<RequestT, ResponseT> =
       channel.newCall<RequestT, ResponseT>(method, callOptions)
 
@@ -285,6 +286,8 @@ object ClientCalls {
         override fun onClose(status: Status, trailersMetadata: GrpcMetadata?) {
           println("ClientCall.Listener.onClose($status, $trailersMetadata)")
           latch.complete(Result.success(status))
+//          if (status.isOk) latch.complete(Result.success(status))
+//          else latch.complete(Result.failure(status.asException()))
         }
 
         override fun onReady() {
@@ -300,9 +303,28 @@ object ClientCalls {
     }.flatMap {
       responses
         .dequeue()
-        .interruptWhen { // Close stream when latch is completed
+        // Close stream when latch is completed
+//        .interruptWhen {
+//          latch.join().let { status ->
+//            if (status.isOk) Either.Right(Unit)
+//            else Either.Left(status.asException())
+//          }
+//        }
+        // Close stream when latch is completed
+//        .close {
+//          val tryGet = latch.tryGet()
+//          if (tryGet != null) {
+//            tryGet.getOrNull()?.let { status: Status ->
+//              if (status.isOk) Either.Right(Unit)
+//              else Either.Left(status.asException())
+//            }
+//          } else null
+//        }
+        // Close stream when latch is completed
+        .close2 {
           latch.join().let { status ->
-            if (status.isOk) Either.Right(Unit) else Either.Left(status.asException())
+            if (status.isOk) Either.Right(Unit)
+            else Either.Left(status.asException())
           }
         }
         .effectTap { clientCall.request(1) }
@@ -316,10 +338,7 @@ object ClientCalls {
       when (ex) {
         is ExitCase.Cancelled -> clientCall.cancel("Collection of requests was cancelled", null)
         is ExitCase.Failure -> clientCall.cancel("Collection of requests completed exceptionally", ex.failure)
-        else -> {
-          latch.join()
-          Unit
-        }
+        else -> Unit
       }
     }
   }.flatten()

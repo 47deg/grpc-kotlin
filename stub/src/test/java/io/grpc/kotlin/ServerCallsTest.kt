@@ -47,14 +47,11 @@ import io.grpc.StatusRuntimeException
 import io.grpc.examples.helloworld.GreeterGrpc
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
-import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.Timeout
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
-
 
 data class CoroutineName(val name: String) : AbstractCoroutineContextElement(CoroutineName) {
   companion object : CoroutineContext.Key<CoroutineName>

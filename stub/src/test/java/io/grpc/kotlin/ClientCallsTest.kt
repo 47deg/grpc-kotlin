@@ -344,6 +344,7 @@ class ClientCallsTest : AbstractCallsTest() {
       method = clientStreamingSayHelloMethod,
       requests = requests
     )
+    println(helloReply)
     assertThat(helloReply).isEqualTo(helloReply("Hello, Tim, Jim"))
   }
 
@@ -381,7 +382,7 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Queue.synchronous<HelloRequest>()
+    val requests = Queue.unsafeBounded<HelloRequest>(0)
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel = channel,
@@ -392,6 +393,7 @@ class ClientCallsTest : AbstractCallsTest() {
     requests.enqueue1(helloRequest("Tim"))
     requests.enqueue1(helloRequest("Jim"))
     val helloReply = response.join()
+    println(helloReply)
     assertThat(helloReply).isEqualTo(helloReply("Hello, Tim, Jim"))
     requests.enqueue1(helloRequest("John"))
   }
