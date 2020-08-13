@@ -29,17 +29,18 @@ fun <O> Stream<O>.stopWhen(terminator: () -> Boolean): Stream<O> =
     }
   }.stream()
 
-fun <O> Stream<O>.close(terminator: () -> Either<Throwable, Unit>?): Stream<O> =
+fun <O> Stream<O>.close(terminator: () -> Result<Unit>?): Stream<O> =
   asPull().repeat { pull ->
     pull.unconsOrNull().flatMap { uncons ->
       when (uncons) {
         null -> Pull.just(null)
         else -> {
-          when (val res = terminator()) {
-            null -> Pull.output<O>(uncons.head).map { uncons.tail }
-            is Either.Right -> Pull.output(uncons.head).map { null }
-            is Either.Left -> Pull.output(uncons.head).map { Pull.raiseError(res.a) }
-          }
+          val res = terminator()
+          if (res == null) Pull.output(uncons.head).map { uncons.tail }
+          else res.fold(
+            { Pull.output(uncons.head).map { null } },
+            { e -> Pull.output(uncons.head).map { Pull.raiseError(e) } }
+          )
         }
       }
     }
