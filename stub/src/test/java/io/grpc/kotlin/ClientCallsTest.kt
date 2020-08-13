@@ -48,7 +48,7 @@ class ClientCallsTest : AbstractCallsTest() {
   /**
    * Verifies that a simple unary RPC successfully returns results to a suspend function.
    */
-  @Test // does not receive the last request
+  @Test // debugging works
   fun simpleUnary(): Unit = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun sayHello(request: HelloRequest, responseObserver: StreamObserver<HelloReply>) {
@@ -382,7 +382,7 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Queue.unsafeBounded<HelloRequest>(0)
+    val requests = Queue.bounded<HelloRequest>(0)
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel = channel,
@@ -463,7 +463,7 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Queue.synchronous<Option<HelloRequest>>()
+    val requests = Queue.bounded<Option<HelloRequest>>(0)
     val rpc: Queue<HelloReply> = ClientCalls.bidiStreamingRpc(
       channel = channel,
       method = bidiStreamingSayHelloMethod,

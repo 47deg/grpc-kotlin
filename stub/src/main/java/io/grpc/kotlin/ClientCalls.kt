@@ -240,10 +240,16 @@ object ClientCalls {
         readiness: Readiness
       ) {
         readiness.suspendUntilReady()
-        requestStream.effectMap { request: RequestT ->
-          clientCall.sendMessage(request)
-          readiness.suspendUntilReady()
-        }.compile().drain()
+        requestStream.compile().toList().let { requests ->
+          requests.map { request ->
+            clientCall.sendMessage(request)
+            readiness.suspendUntilReady()
+          }
+        }
+//        requestStream.effectMap { request: RequestT ->
+//          clientCall.sendMessage(request)
+//          readiness.suspendUntilReady()
+//        }.compile().drain()
       }
     }
   }
@@ -273,7 +279,7 @@ object ClientCalls {
     val responses = Queue.unsafeBounded<ResponseT>(1)
     val readiness = Readiness { clientCall.isReady }
 
-    val latch = UnsafePromise<Status>()
+    val latch = UnsafePromise<Either<Throwable, Unit>?>()
 
     clientCall.start(
       object : ClientCall.Listener<ResponseT>() {
@@ -285,9 +291,9 @@ object ClientCalls {
 
         override fun onClose(status: Status, trailersMetadata: GrpcMetadata?) {
           println("ClientCall.Listener.onClose($status, $trailersMetadata)")
-          latch.complete(Result.success(status))
-//          if (status.isOk) latch.complete(Result.success(status))
-//          else latch.complete(Result.failure(status.asException()))
+          // latch.complete(Result.success(status))
+          if (status.isOk) latch.complete(Result.success(Either.Right(Unit)))
+          else latch.complete(Result.failure(status.asException()))
         }
 
         override fun onReady() {
@@ -304,28 +310,9 @@ object ClientCalls {
       responses
         .dequeue()
         // Close stream when latch is completed
-//        .interruptWhen {
-//          latch.join().let { status ->
-//            if (status.isOk) Either.Right(Unit)
-//            else Either.Left(status.asException())
-//          }
-//        }
-        // Close stream when latch is completed
-//        .close {
-//          val tryGet = latch.tryGet()
-//          if (tryGet != null) {
-//            tryGet.getOrNull()?.let { status: Status ->
-//              if (status.isOk) Either.Right(Unit)
-//              else Either.Left(status.asException())
-//            }
-//          } else null
-//        }
-        // Close stream when latch is completed
-        .close2 {
-          latch.join().let { status ->
-            if (status.isOk) Either.Right(Unit)
-            else Either.Left(status.asException())
-          }
+        .close {
+          val tryGet = latch.tryGet()
+          if (tryGet != null) tryGet.getOrNull() else null
         }
         .effectTap { clientCall.request(1) }
     }.concurrently(
