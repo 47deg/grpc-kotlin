@@ -1,6 +1,5 @@
 package io.grpc.kotlin
 
-import arrow.core.Either
 import arrow.fx.coroutines.CancelToken
 import arrow.fx.coroutines.ForkAndForget
 import arrow.fx.coroutines.cancellable
@@ -12,22 +11,6 @@ import arrow.fx.coroutines.stream.repeat
 import arrow.fx.coroutines.stream.stream
 import arrow.fx.coroutines.stream.unconsOrNull
 import java.util.concurrent.atomic.AtomicReference
-
-fun <O> Stream<O>.stopWhen(terminator: () -> Boolean): Stream<O> =
-  asPull().repeat { pull ->
-    pull.unconsOrNull().flatMap { uncons ->
-      when (uncons) {
-        null -> Pull.just(null)
-        else -> {
-          if (!terminator()) {
-            Pull.output<O>(uncons.head).map { uncons.tail }
-          } else {
-            Pull.output(uncons.head).map { null }
-          }
-        }
-      }
-    }
-  }.stream()
 
 fun <O> Stream<O>.close(terminator: () -> Result<Unit>?): Stream<O> =
   asPull().repeat { pull ->
@@ -41,24 +24,6 @@ fun <O> Stream<O>.close(terminator: () -> Result<Unit>?): Stream<O> =
             { Pull.output(uncons.head).map { null } },
             { e -> Pull.output(uncons.head).map { Pull.raiseError(e) } }
           )
-        }
-      }
-    }
-  }.stream()
-
-fun <O> Stream<O>.close2(terminator: suspend () -> Either<Throwable, Unit>?): Stream<O> =
-  asPull().repeat { pull ->
-    pull.unconsOrNull().flatMap { uncons ->
-      Pull.effect { terminator() }.flatMap { res: Either<Throwable, Unit>? ->
-        when (uncons) {
-          null -> Pull.just(null)
-          else -> {
-            when (res) {
-              null -> Pull.output<O>(uncons.head).map { uncons.tail }
-              is Either.Right -> Pull.output(uncons.head).map { null }
-              is Either.Left -> Pull.output(uncons.head).map { Pull.raiseError(res.a) }
-            }
-          }
         }
       }
     }

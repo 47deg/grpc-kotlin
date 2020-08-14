@@ -71,7 +71,7 @@ object ServerCalls {
     return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
       requests
         .singleOrStatusStream("request", descriptor)
-        .flatMap { Stream.effect { implementation(it) } }
+        .effectMap(implementation)
     }
   }
 

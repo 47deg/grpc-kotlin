@@ -57,11 +57,12 @@ internal fun <O> Stream<O>.singleOrStatusStream(expected: String, descriptor: An
   fun go(prev: O?, s: Pull<O, Unit>, count: Int): Pull<Nothing, O> =
     s.unconsOrNull().flatMap { uncons ->
       when (uncons) {
-        null -> if (count == 1) Pull.just(prev) as Pull<Nothing, O>
-        else Pull.raiseError(StatusException(
-          Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received none")
-        ))
-
+        null -> when {
+          (count == 1) -> Pull.just(prev) as Pull<Nothing, O>
+          else -> Pull.raiseError(StatusException(
+            Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received none")
+          ))
+        }
         else -> when {
           uncons.head.size() > 1 || count > 0 -> Pull.raiseError(StatusException(
             Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received two")

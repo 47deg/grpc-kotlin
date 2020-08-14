@@ -18,7 +18,6 @@ package io.grpc.kotlin
 
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.Stream.Companion.effect
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.flatten
@@ -104,7 +103,7 @@ object ClientCalls {
     callOptions: CallOptions = CallOptions.DEFAULT,
     headers: suspend () -> GrpcMetadata = { GrpcMetadata() }
   ): (RequestT) -> Stream<ResponseT> = { request ->
-    effect {
+    Stream.effect {
       serverStreamingRpc(
         channel,
         method,
@@ -200,7 +199,7 @@ object ClientCalls {
     callOptions: CallOptions = CallOptions.DEFAULT,
     headers: suspend () -> GrpcMetadata = { GrpcMetadata() }
   ): (Stream<RequestT>) -> Stream<ResponseT> = {
-    effect {
+    Stream.effect {
       bidiStreamingRpc(
         channel,
         method,
@@ -259,7 +258,7 @@ object ClientCalls {
     callOptions: CallOptions,
     headers: GrpcMetadata,
     request: Request<RequestT>
-  ): Stream<ResponseT> = effect {
+  ): Stream<ResponseT> = Stream.effect {
 
     val clientCall: ClientCall<RequestT, ResponseT> =
       channel.newCall<RequestT, ResponseT>(method, callOptions)
@@ -286,7 +285,8 @@ object ClientCalls {
         override fun onClose(status: Status, trailersMetadata: GrpcMetadata?) {
           println("ClientCall.Listener.onClose($status, $trailersMetadata)")
           if (status.isOk) latch.complete(Result.success(Unit))
-          else latch.complete(Result.failure(status.asException()))
+          else latch.complete(Result.failure(status.asException(trailersMetadata)))
+          println("onClose LATCH = ${latch.tryGet()}")
         }
 
         override fun onReady() {
@@ -297,7 +297,7 @@ object ClientCalls {
       headers
     )
 
-    effect {
+    Stream.effect {
       println("ClientCalls.effect1: clientCall.request(1)")
       clientCall.request(1)
     }.flatMap {
@@ -313,8 +313,9 @@ object ClientCalls {
           println("ClientCalls.responses.dequeue.effectTap: clientCall.request(1)")
           clientCall.request(1)
         }
+
     }.concurrently(
-      effect {
+      Stream.effect {
         println("ClientCalls.concurrently: request.sendTo(clientCall, readiness)")
         request.sendTo(clientCall, readiness)
         println("ClientCalls.concurrently: clientCall.halfClose()")

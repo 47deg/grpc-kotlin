@@ -150,8 +150,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(closeStatusResult.code).isEqualTo(Status.Code.OK)
   }
 
-  // Failing due to it was closed before calling: clientCall.halfClose()
-  @Test
+  @Test // works
   fun unaryMethodReceivedTooManyRequests() = runBlocking {
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
@@ -263,7 +262,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
   class MyException : Exception()
 
-  @Test // debugging works, race condition?
+  @Test // works
   fun unaryMethodThrowsException() = runBlocking {
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
@@ -279,7 +278,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(ex.status.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
-  @Test // debugging works, race condition?
+  @Test // fails because of client not ending, same error than ClientCallsTest
   fun simpleServerStreaming() = runBlocking {
     val channel = makeChannel(
       ServerCalls.serverStreamingServerMethodDefinition(context, serverStreamingSayHelloMethod) {
@@ -301,7 +300,7 @@ class ServerCallsTest : AbstractCallsTest() {
       ).inOrder()
   }
 
-  @Test // ExitCase is correct (ExitCase.Cancelled) but never ends
+  @Test // executed individually it works :S
   fun serverStreamingCancellationPropagatedToServer() = runBlocking {
     val requestReceived = Promise<Unit>()
     val cancelled = Promise<ExitCase>()
@@ -374,46 +373,47 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(status.code).isEqualTo(Status.Code.OUT_OF_RANGE)
   }
 
-  // TODO FIX
-//  @Test
-//  fun serverStreamingHandledWithoutWaitingForHalfClose() = runBlocking {
-//    val processingStarted = UnsafePromise<Unit>()
-//
-//    val channel: ManagedChannel = makeChannel(
-//      ServerCalls.serverStreamingServerMethodDefinition(context, serverStreamingSayHelloMethod) {
-//        processingStarted.complete(Result.success(Unit))
-//        Stream.iterable(it.nameList).map { helloReply("Hello, $it") }
-//      }
-//    )
-//
-//    val clientCall = channel.newCall(serverStreamingSayHelloMethod, CallOptions.DEFAULT)
-//    val responseChannel = Queue.unbounded<HelloReply>()
-//
-//    clientCall.start(object : ClientCall.Listener<HelloReply>() {
-//      override fun onMessage(message: HelloReply) {
-//        responseChannel.tryOffer1(message)
-//      }
-//
-//      override fun onClose(status: Status, trailers: Metadata?) {
-//        // no need to close it: responseChannel.close()
-//      }
-//    }, Metadata())
-//
-//    clientCall.sendMessage(multiHelloRequest("Ruby", "Sapphire"))
-//    clientCall.request(2)
-//
-//    processingStarted.join()
-//
-//    assertThat(responseChannel.dequeue1()).isEqualTo(helloReply("Hello, Ruby"))
-//    assertThat(responseChannel.dequeue1()).isEqualTo(helloReply("Hello, Sapphire"))
-//
-//    sleep(200.milliseconds)
-//
-//    // assertThat(responseChannel.isClosedForReceive).isFalse()
-//
-//    clientCall.halfClose()
-//    assertThat(responseChannel.tryDequeue1()).isEqualTo(None) // closed with no further responses
-//  }
+  @Test
+  fun serverStreamingHandledWithoutWaitingForHalfClose() = runBlocking {
+    val processingStarted = UnsafePromise<Unit>()
+
+    val channel = makeChannel(
+      ServerCalls.serverStreamingServerMethodDefinition(context, serverStreamingSayHelloMethod) { request ->
+        processingStarted.complete(Result.success(Unit))
+        Stream.iterable(request.nameList)
+          .map { helloReply("Hello, $request") }
+      }
+    )
+
+    val clientCall = channel.newCall(serverStreamingSayHelloMethod, CallOptions.DEFAULT)
+    val responseChannel = Queue.unbounded<HelloReply>()
+
+    clientCall.start(object : ClientCall.Listener<HelloReply>() {
+      override fun onMessage(message: HelloReply) {
+        // responseChannel.sendBlocking(message)
+        responseChannel.tryOffer1(message)
+      }
+
+      override fun onClose(status: Status, trailers: Metadata?) {
+        // no need to close it: responseChannel.close()
+      }
+    }, Metadata())
+
+    clientCall.sendMessage(multiHelloRequest("Ruby", "Sapphire"))
+    clientCall.request(2)
+
+    processingStarted.join()
+
+    assertThat(responseChannel.dequeue1()).isEqualTo(helloReply("Hello, Ruby"))
+    assertThat(responseChannel.dequeue1()).isEqualTo(helloReply("Hello, Sapphire"))
+
+    sleep(200.milliseconds)
+
+    // assertThat(responseChannel.isClosedForReceive).isFalse()
+
+    clientCall.halfClose()
+    assertThat(responseChannel.tryDequeue1()).isEqualTo(None) // closed with no further responses
+  }
 
   @Test
   fun serverStreamingThrowsException() = runBlocking {
@@ -501,7 +501,7 @@ class ServerCallsTest : AbstractCallsTest() {
     ).isEqualTo(helloReply("Hello, Peridot and Lapis"))
   }
 
-  @Test
+  @Test // fails
   fun clientStreamingWhenRequestsCancelledNoBackpressure() = runBlocking {
     val latch = Promise<Unit>()
 
@@ -516,7 +516,8 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     )
 
-    val requestChannel = Queue.bounded<HelloRequest>(1)
+    val requestChannel = Queue.unbounded<HelloRequest>()
+//    val requestChannel = Queue.synchronous<HelloRequest>()
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel,
@@ -632,11 +633,11 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(result.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
-  @Test
+  @Test // helloReply("Goodbye") not received by client
   fun simpleBidiStreamingPingPong() = runBlocking {
     val channel = makeChannel(
       ServerCalls.bidiStreamingServerMethodDefinition(context, bidiStreamingSayHelloMethod) { requests ->
-        requests.map { helloReply("Hello, ${it.name}") }.onFinalize { Stream.just(helloReply("Goodbye")) }
+        requests.map { helloReply("Hello, ${it.name}") }.onFinalize { Stream(helloReply("Goodbye")) }
       }
     )
 
@@ -667,7 +668,6 @@ class ServerCallsTest : AbstractCallsTest() {
       ) { requests: Stream<HelloRequest> ->
         requests.effectMap {
           requestReceived.complete(Unit)
-
           guaranteeCase({ never<HelloReply>() }) { case ->
             cancelled.complete(case)
           }
@@ -857,7 +857,7 @@ class ServerCallsTest : AbstractCallsTest() {
 //    ).containsExactly(helloReply("2nd"), helloReply("3rd"))
 //  }
 
-  @Test
+  @Test // fails
   fun contextPreservation() = runBlocking {
     val contextKey = Context.key<String>("foo")
     val channel = makeChannel(
