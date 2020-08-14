@@ -16,7 +16,6 @@
 
 package io.grpc.kotlin
 
-import arrow.core.Either
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.Stream.Companion.effect
@@ -240,16 +239,10 @@ object ClientCalls {
         readiness: Readiness
       ) {
         readiness.suspendUntilReady()
-        requestStream.compile().toList().let { requests ->
-          requests.map { request ->
-            clientCall.sendMessage(request)
-            readiness.suspendUntilReady()
-          }
-        }
-//        requestStream.effectMap { request: RequestT ->
-//          clientCall.sendMessage(request)
-//          readiness.suspendUntilReady()
-//        }.compile().drain()
+        requestStream.effectMap { request: RequestT ->
+          clientCall.sendMessage(request)
+          readiness.suspendUntilReady()
+        }.compile().drain()
       }
     }
   }
@@ -284,6 +277,7 @@ object ClientCalls {
     clientCall.start(
       object : ClientCall.Listener<ResponseT>() {
         override fun onMessage(message: ResponseT) {
+          println("ClientCall.Listener.onMessage: $message")
           if (!responses.tryOffer1(message)) {
             throw AssertionError("onMessage should never be called until responses is ready")
           }
@@ -291,7 +285,6 @@ object ClientCalls {
 
         override fun onClose(status: Status, trailersMetadata: GrpcMetadata?) {
           println("ClientCall.Listener.onClose($status, $trailersMetadata)")
-          // latch.complete(Result.success(status))
           if (status.isOk) latch.complete(Result.success(Unit))
           else latch.complete(Result.failure(status.asException()))
         }
@@ -305,16 +298,26 @@ object ClientCalls {
     )
 
     effect {
+      println("ClientCalls.effect1: clientCall.request(1)")
       clientCall.request(1)
     }.flatMap {
       responses
         .dequeue()
         // Close stream when latch is completed
-        .close { latch.tryGet() }
-        .effectTap { clientCall.request(1) }
+        .close {
+          val tryGet = latch.tryGet()
+          println("ClientCalls.responses.dequeue.close: $tryGet")
+          tryGet
+        }
+        .effectTap {
+          println("ClientCalls.responses.dequeue.effectTap: clientCall.request(1)")
+          clientCall.request(1)
+        }
     }.concurrently(
       effect {
+        println("ClientCalls.concurrently: request.sendTo(clientCall, readiness)")
         request.sendTo(clientCall, readiness)
+        println("ClientCalls.concurrently: clientCall.halfClose()")
         clientCall.halfClose()
       }
     ).onFinalizeCase { ex ->

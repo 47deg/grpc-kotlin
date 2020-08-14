@@ -86,7 +86,10 @@ internal suspend fun <T> Stream<T>.singleOrStatus(
 suspend fun <T> Stream<T>.produceIn(): Queue<T> {
   val queue = Queue.unbounded<T>()
   ForkConnected {
-    fold(Unit) { _, item ->
+//    this.effectMap { item: T ->
+//      queue.enqueue1(item)
+//    }.compile().drain()
+    fold(Unit) { _, item: T ->
       queue.tryOffer1(item)
     }.compile().drain()
   }

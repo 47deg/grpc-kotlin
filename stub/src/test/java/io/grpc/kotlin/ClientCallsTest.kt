@@ -337,8 +337,10 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requestIterable = listOf<HelloRequest>(helloRequest("Tim"), helloRequest("Jim"))
-    val requests = Stream.iterable(requestIterable)
+    val requests = Stream(
+      helloRequest("Tim"),
+      helloRequest("Jim")
+    )
     val helloReply = ClientCalls.clientStreamingRpc(
       channel = channel,
       method = clientStreamingSayHelloMethod,
@@ -359,6 +361,7 @@ class ClientCallsTest : AbstractCallsTest() {
           private var isComplete = false
 
           override fun onNext(value: HelloRequest) {
+            println("StreamObserver.onNext: $value")
             names += value.name
             if (names.size >= 2 && !isComplete) {
               onCompleted()
@@ -368,6 +371,7 @@ class ClientCallsTest : AbstractCallsTest() {
           override fun onError(t: Throwable) = throw t
 
           override fun onCompleted() {
+            println("StreamObserver.onCompleted: $isComplete")
             if (!isComplete) {
               responseObserver.onNext(
                 helloReply(names.joinToString(prefix = "Hello, ", separator = ", "))
@@ -382,7 +386,8 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Queue.bounded<HelloRequest>(0)
+//    val requests = Queue.bounded<HelloRequest>(0)
+    val requests = Queue.synchronous<HelloRequest>()
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel = channel,
@@ -390,12 +395,14 @@ class ClientCallsTest : AbstractCallsTest() {
         requests = requests.dequeue()
       )
     }
+    println("requests.enqueue1(helloRequest(Tim))")
     requests.enqueue1(helloRequest("Tim"))
+    println("requests.enqueue1(helloRequest(Jim))")
     requests.enqueue1(helloRequest("Jim"))
     val helloReply = response.join()
     println(helloReply)
     assertThat(helloReply).isEqualTo(helloReply("Hello, Tim, Jim"))
-    requests.enqueue1(helloRequest("John"))
+    //requests.enqueue1(helloRequest("John"))
   }
 
   @Test // works
@@ -425,7 +432,8 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Queue.synchronous<HelloRequest>()
+    val requests = Queue.bounded<HelloRequest>(1)
+//    val requests2 = Stream(helloRequest("Tim"))
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel = channel,
@@ -437,11 +445,11 @@ class ClientCallsTest : AbstractCallsTest() {
     response.cancel()
     // This won't throw any CancellationException
     // assertThrows<CancellationException> {
-    requests.enqueue1(helloRequest("John"))
+//    requests.enqueue1(helloRequest("John"))
     // }
   }
 
-  @Test // never ends
+  @Test // works
   fun simpleBidiStreamingRpc() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun bidiStreamSayHello(
@@ -449,12 +457,14 @@ class ClientCallsTest : AbstractCallsTest() {
       ): StreamObserver<HelloRequest> {
         return object : StreamObserver<HelloRequest> {
           override fun onNext(value: HelloRequest) {
+            println("StreamObserver.onNext: $value")
             responseObserver.onNext(helloReply("Hello, ${value.name}"))
           }
 
           override fun onError(t: Throwable) = throw t
 
           override fun onCompleted() {
+            println("StreamObserver.onCompleted")
             responseObserver.onCompleted()
           }
         }
@@ -463,7 +473,8 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-    val requests = Queue.bounded<Option<HelloRequest>>(0)
+//    val requests = Queue.bounded<Option<HelloRequest>>(0)
+    val requests = Queue.synchronous<Option<HelloRequest>>()
     val rpc: Queue<HelloReply> = ClientCalls.bidiStreamingRpc(
       channel = channel,
       method = bidiStreamingSayHelloMethod,
@@ -473,6 +484,7 @@ class ClientCallsTest : AbstractCallsTest() {
     assertThat(rpc.dequeue1()).isEqualTo(helloReply("Hello, Tim"))
     requests.enqueue1(Some(helloRequest("Jim")))
     assertThat(rpc.dequeue1()).isEqualTo(helloReply("Hello, Jim"))
+    requests.enqueue1(None)
     assertThat(rpc.tryDequeue1()).isEqualTo(None) // rpc closes responses
   }
 
@@ -560,7 +572,7 @@ class ClientCallsTest : AbstractCallsTest() {
 
   private class MyException : Exception()
 
-  @Test // works
+  @Test // debugging works
   fun bidiStreamingRpcCollectsRequestsEachTime() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun bidiStreamSayHello(
@@ -568,12 +580,14 @@ class ClientCallsTest : AbstractCallsTest() {
       ): StreamObserver<HelloRequest> {
         return object : StreamObserver<HelloRequest> {
           override fun onNext(value: HelloRequest) {
+            println("StreamObserver.onNext: $value")
             responseObserver.onNext(helloReply("Hello, ${value.name}"))
           }
 
           override fun onError(t: Throwable) = throw t
 
           override fun onCompleted() {
+            println("StreamObserver.onCompleted")
             responseObserver.onCompleted()
           }
         }
