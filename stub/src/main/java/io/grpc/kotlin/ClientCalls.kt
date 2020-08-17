@@ -16,15 +16,20 @@
 
 package io.grpc.kotlin
 
+import arrow.core.None
+import arrow.core.Option
+import arrow.core.Some
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.flatten
+import arrow.fx.coroutines.stream.terminateOnNone
 import io.grpc.CallOptions
 import io.grpc.ClientCall
 import io.grpc.MethodDescriptor
 import io.grpc.Status
+import io.grpc.StatusException
 import io.grpc.Channel as GrpcChannel
 import io.grpc.Metadata as GrpcMetadata
 
@@ -237,9 +242,13 @@ object ClientCalls {
         clientCall: ClientCall<RequestT, *>,
         readiness: Readiness
       ) {
+        println("Flowing.suspendUntilReady")
         readiness.suspendUntilReady()
+        println("Flowing.requestStream.effectMap")
         requestStream.effectMap { request: RequestT ->
+          println("Flowing.requestStream.effectMap.sendMessage: $request")
           clientCall.sendMessage(request)
+          println("Flowing.requestStream.effectMap.suspendUntilReady")
           readiness.suspendUntilReady()
         }.compile().drain()
       }
@@ -268,7 +277,7 @@ object ClientCalls {
      * we request a response from the server, which only happens when responses is empty and
      * there is room in the buffer.
      */
-    val responses = Queue.unsafeBounded<ResponseT>(1)
+    val responses = Queue.unsafeBounded<Option<ResponseT>>(1)
     val readiness = Readiness { clientCall.isReady }
 
     val latch = UnsafePromise<Unit>()
@@ -277,7 +286,7 @@ object ClientCalls {
       object : ClientCall.Listener<ResponseT>() {
         override fun onMessage(message: ResponseT) {
           println("ClientCall.Listener.onMessage: $message")
-          if (!responses.tryOffer1(message)) {
+          if (!responses.tryOffer1(Some(message))) {
             throw AssertionError("onMessage should never be called until responses is ready")
           }
         }
@@ -287,6 +296,8 @@ object ClientCalls {
           if (status.isOk) latch.complete(Result.success(Unit))
           else latch.complete(Result.failure(status.asException(trailersMetadata)))
           println("onClose LATCH = ${latch.tryGet()}")
+          // close the queue
+          responses.tryOffer1(None)
         }
 
         override fun onReady() {
@@ -303,9 +314,9 @@ object ClientCalls {
     }.flatMap {
       responses
         .dequeue()
-        // Close stream when latch is completed
+        // Close stream when latch is set
         .close {
-          val tryGet = latch.tryGet()
+          val tryGet: Result<Unit>? = latch.tryGet()
           println("ClientCalls.responses.dequeue.close: $tryGet")
           tryGet
         }
@@ -313,6 +324,7 @@ object ClientCalls {
           println("ClientCalls.responses.dequeue.effectTap: clientCall.request(1)")
           clientCall.request(1)
         }
+        .terminateOnNone()
 
     }.concurrently(
       Stream.effect {
@@ -326,7 +338,18 @@ object ClientCalls {
       when (ex) {
         is ExitCase.Cancelled -> clientCall.cancel("Collection of requests was cancelled", null)
         is ExitCase.Failure -> clientCall.cancel("Collection of requests completed exceptionally", ex.failure)
-        else -> Unit
+        else -> {
+          // double check in case latch was not set when Stream.close (race condition) and queue was terminated
+          if (!latch.isEmpty()) {
+            val result = latch.tryGet()
+            if (result != null) {
+              result.fold({ }, {
+                clientCall.cancel("Collection of requests completed exceptionally", result.exceptionOrNull())
+                Stream.raiseError<StatusException>(result.exceptionOrNull()!!).compile().drain()
+              })
+            }
+          }
+        }
       }
     }
   }.flatten()

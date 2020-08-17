@@ -46,7 +46,7 @@ internal class UnsafePromise<A> {
   private val state: AtomicReference<State<A>> = AtomicReference(State.Empty)
 
   fun isEmpty(): Boolean =
-    when (state.get().also { println("UnsafePromise.isEmpty: $it") }) {
+    when (state.get().also { println("UnsafePromise.isEmpty?: $it") }) {
       is State.Full -> false
       else -> true
     }

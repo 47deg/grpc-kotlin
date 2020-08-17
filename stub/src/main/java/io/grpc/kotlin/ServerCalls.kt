@@ -17,12 +17,16 @@
 package io.grpc.kotlin
 
 import arrow.core.Either
+import arrow.core.None
+import arrow.core.Option
+import arrow.core.Some
 import arrow.fx.coroutines.Environment
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.flatten
+import arrow.fx.coroutines.stream.terminateOnNone
 import io.grpc.MethodDescriptor
 import io.grpc.MethodDescriptor.MethodType.BIDI_STREAMING
 import io.grpc.MethodDescriptor.MethodType.CLIENT_STREAMING
@@ -203,32 +207,36 @@ object ServerCalls {
     call.sendHeaders(GrpcMetadata())
 
     val readiness = Readiness { call.isReady }
-    val requestsChannel = Queue.unsafeBounded<RequestT>(1)
+    val requestsChannel = Queue.unsafeBounded<Option<RequestT>>(1)
 
     // We complete this latch when processing requests fails, or when we halfClose.
     // Check `isEmpty` to check if we're still taking requests.
     val isActive = UnsafePromise<Unit>()
 
-    val requests = // TODO should we request messages in `Chunks` ???
-      Stream.effect { call.request(1) } // Request first message
-        .flatMap {
-          requestsChannel
-            .dequeue() // For every value we receive, we need to request the next one
-            .interruptWhen { Either.Right(isActive.join()) }
-            .effectTap { call.request(1) }
-        }.onFinalizeCase { ex ->
-          println("ServerCall.Requests.onFinalizeCase: $ex")
-          when (ex) {
-            is ExitCase.Failure -> call.request(1) // make sure we don't cause backpressure
-            else -> Unit
-          }
+    // TODO should we request messages in `Chunks` ???
+    val requests = Stream.effect { call.request(1) } // Request first message
+      .flatMap {
+        requestsChannel
+          .dequeue()
+          .interruptWhen { Either.Right(isActive.join()) }
+          // For every value we receive, we need to request the next one
+          .effectTap { call.request(1) }
+          .terminateOnNone()
+      }.onFinalizeCase { ex ->
+        println("ServerCall.Requests.onFinalizeCase: $ex")
+        when (ex) {
+          is ExitCase.Failure -> call.request(1) // make sure we don't cause backpressure
+          else -> Unit
         }
+      }
 
     // Runs async cancellable on the provided context, always returns a new cancellable scope.
     val rpcCancelToken = Environment(context).unsafeRunAsyncCancellable {
       Stream.effect { implementation(requests) }.flatten()
         .effectMap { response: ResponseT ->
+          println("ServerCalls.Server.effectMap.suspendUntilReady")
           readiness.suspendUntilReady()
+          println("ServerCalls.Server.effectMap.sendMessage: $response")
           call.sendMessage(response)
         }.onFinalizeCase { case ->
           println("ServerCalls.Server.onFinalizeCase: $case")
@@ -254,13 +262,14 @@ object ServerCalls {
         println("ServerCall.Listener.onCancel()")
         rpcCancelToken.invoke()
         // TODO promise have to be completed?
-        if (isActive.isEmpty())
-          isActive.complete(Result.failure(CancellationException()))
+//        if (isActive.isEmpty())
+//          isActive.complete(Result.failure(CancellationException()))
+        requestsChannel.tryOffer1(None)
       }
 
       override fun onMessage(message: RequestT) {
         println("ServerCall.Listener.onMessage($message)")
-        if (isActive.isEmpty() && !requestsChannel.tryOffer1(message)) {
+        if (isActive.isEmpty() && !requestsChannel.tryOffer1(Some(message))) {
           throw Status.INTERNAL
             .withDescription("onMessage should never be called when requestsChannel is unready")
             .asException()
@@ -274,6 +283,8 @@ object ServerCalls {
       override fun onHalfClose() {
         println("ServerCall.Listener.onHalfClose()")
         isActive.complete(Result.success(Unit))
+        // close the queue
+        requestsChannel.tryOffer1(None)
       }
 
       override fun onReady() {
