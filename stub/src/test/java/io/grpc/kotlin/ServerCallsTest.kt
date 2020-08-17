@@ -808,15 +808,15 @@ class ServerCallsTest : AbstractCallsTest() {
 
   @Test
   fun serverStreamingFlowControl() = runBlocking {
-    val receiveFirstMessage = ForkConnected { }
-    val receivedFirstMessage = ForkConnected { }
+    val receiveFirstMessage = Promise<Unit>()
+    val receivedFirstMessage = Promise<Unit>()
     val channel: ManagedChannel = makeChannel(
       ServerCalls.serverStreamingServerMethodDefinition(
         EmptyCoroutineContext,
         serverStreamingSayHelloMethod
       ) {
         Stream.effect {
-          val queue = Queue.unsafeUnbounded<HelloReply>()
+          val queue = Queue.unbounded<HelloReply>()
           queue.enqueue1(helloReply("1st"))
           queue.enqueue1(helloReply("2nd"))
           val thirdSend = ForkConnected {
@@ -824,8 +824,8 @@ class ServerCallsTest : AbstractCallsTest() {
           }
           sleep(200.milliseconds)
           // assertThat(thirdSend.isCompleted).isFalse()
-          receiveFirstMessage.cancel()
-          receivedFirstMessage.join()
+          receiveFirstMessage.complete(Unit)
+          receivedFirstMessage.get()
           thirdSend.join()
           queue.dequeue()
         }.flatten()
@@ -837,10 +837,10 @@ class ServerCallsTest : AbstractCallsTest() {
       serverStreamingSayHelloMethod,
       multiHelloRequest()
     ).produceIn()
-    receiveFirstMessage.join()
+    receiveFirstMessage.get()
     val helloReply1st = responses.dequeue1()
     assertThat(helloReply1st).isEqualTo(helloReply("1st"))
-    receivedFirstMessage.join()
+    receivedFirstMessage.complete(Unit)
     val toList = responses.dequeue().compile().toList()
     assertThat(toList).containsExactly(helloReply("2nd"), helloReply("3rd"))
   }

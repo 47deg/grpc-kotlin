@@ -227,6 +227,17 @@ object ServerCalls {
         when (ex) {
           is ExitCase.Failure -> call.request(1) // make sure we don't cause backpressure
           else -> Unit
+//          else -> {
+//            // double check in case latch was not set when Stream.close (race condition) and queue was terminated
+//            if (!isActive.isEmpty()) {
+//              val result = isActive.tryGet()
+//              if (result != null) {
+//                result.fold({ }, {
+//                  Stream.raiseError<StatusException>(result.exceptionOrNull()!!).compile().drain()
+//                })
+//              }
+//            }
+//          }
         }
       }
 
