@@ -27,6 +27,7 @@ import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.flatten
 import arrow.fx.coroutines.stream.terminateOnNone
+import arrow.fx.coroutines.stream.terminateOnNull
 import io.grpc.MethodDescriptor
 import io.grpc.MethodDescriptor.MethodType.BIDI_STREAMING
 import io.grpc.MethodDescriptor.MethodType.CLIENT_STREAMING
@@ -207,7 +208,7 @@ object ServerCalls {
     call.sendHeaders(GrpcMetadata())
 
     val readiness = Readiness { call.isReady }
-    val requestsChannel = Queue.unsafeBounded<Option<RequestT>>(1)
+    val requestsChannel = Queue.unsafeBounded<RequestT>(1)
 
     // We complete this latch when processing requests fails, or when we halfClose.
     // Check `isEmpty` to check if we're still taking requests.
@@ -221,19 +222,17 @@ object ServerCalls {
           .interruptWhen { Either.Right(isActive.join()) }
           // For every value we receive, we need to request the next one
           .effectTap { call.request(1) }
-          .terminateOnNone()
       }.onFinalizeCase { ex ->
         println("ServerCall.Requests.onFinalizeCase: $ex")
         when (ex) {
           is ExitCase.Failure -> call.request(1) // make sure we don't cause backpressure
           else -> Unit
 //          else -> {
-//            // double check in case latch was not set when Stream.close (race condition) and queue was terminated
 //            if (!isActive.isEmpty()) {
 //              val result = isActive.tryGet()
 //              if (result != null) {
 //                result.fold({ }, {
-//                  Stream.raiseError<StatusException>(result.exceptionOrNull()!!).compile().drain()
+//                  throw result.exceptionOrNull()!!
 //                })
 //              }
 //            }
@@ -275,12 +274,13 @@ object ServerCalls {
         // TODO promise have to be completed?
 //        if (isActive.isEmpty())
 //          isActive.complete(Result.failure(CancellationException()))
-        requestsChannel.tryOffer1(None)
+//        requestsChannel.tryOffer1(None)
       }
 
       override fun onMessage(message: RequestT) {
         println("ServerCall.Listener.onMessage($message)")
-        if (isActive.isEmpty() && !requestsChannel.tryOffer1(Some(message))) {
+        //if (isActive.isEmpty() && !requestsChannel.tryOffer1(Some(message))) {
+        if (isActive.isEmpty() && !requestsChannel.tryOffer1(message)) {
           throw Status.INTERNAL
             .withDescription("onMessage should never be called when requestsChannel is unready")
             .asException()
@@ -295,7 +295,7 @@ object ServerCalls {
         println("ServerCall.Listener.onHalfClose()")
         isActive.complete(Result.success(Unit))
         // close the queue
-        requestsChannel.tryOffer1(None)
+//        requestsChannel.tryOffer1(None)
       }
 
       override fun onReady() {

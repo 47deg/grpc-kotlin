@@ -29,7 +29,6 @@ import io.grpc.CallOptions
 import io.grpc.ClientCall
 import io.grpc.MethodDescriptor
 import io.grpc.Status
-import io.grpc.StatusException
 import io.grpc.Channel as GrpcChannel
 import io.grpc.Metadata as GrpcMetadata
 
@@ -314,17 +313,11 @@ object ClientCalls {
     }.flatMap {
       responses
         .dequeue()
-        // Close stream when latch is set
-        .close {
-          val tryGet: Result<Unit>? = latch.tryGet()
-          println("ClientCalls.responses.dequeue.close: $tryGet")
-          tryGet
-        }
+        .terminateOnNone()
         .effectTap {
           println("ClientCalls.responses.dequeue.effectTap: clientCall.request(1)")
           clientCall.request(1)
         }
-        .terminateOnNone()
 
     }.concurrently(
       Stream.effect {
@@ -339,14 +332,15 @@ object ClientCalls {
         is ExitCase.Cancelled -> clientCall.cancel("Collection of requests was cancelled", null)
         is ExitCase.Failure -> clientCall.cancel("Collection of requests completed exceptionally", ex.failure)
         else -> {
-          // double check in case latch was not set when Stream.close (race condition) and queue was terminated
           if (!latch.isEmpty()) {
             val result = latch.tryGet()
             if (result != null) {
-              result.fold({ }, {
-                clientCall.cancel("Collection of requests completed exceptionally", result.exceptionOrNull())
-                Stream.raiseError<StatusException>(result.exceptionOrNull()!!).compile().drain()
-              })
+              result.fold(
+                onSuccess = { Unit },
+                onFailure = {
+                  clientCall.cancel("Collection of requests completed exceptionally", result.exceptionOrNull())
+                  throw result.exceptionOrNull()!!
+                })
             }
           }
         }
