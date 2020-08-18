@@ -29,6 +29,7 @@ import arrow.fx.coroutines.milliseconds
 import arrow.fx.coroutines.never
 import arrow.fx.coroutines.sleep
 import arrow.fx.coroutines.stream.Stream
+import arrow.fx.coroutines.stream.append
 import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.flatten
@@ -290,7 +291,7 @@ class ServerCallsTest : AbstractCallsTest() {
       ).inOrder()
   }
 
-  @Test // works executed individually
+  @Test // works
   fun serverStreamingCancellationPropagatedToServer() = runBlocking {
     val requestReceived = Promise<Unit>()
     val cancelled = Promise<ExitCase>()
@@ -301,9 +302,9 @@ class ServerCallsTest : AbstractCallsTest() {
       ) {
         Stream.effect {
           requestReceived.complete(Unit)
-          guaranteeCase({ never<HelloReply>() }) { case ->
-            cancelled.complete(case)
-          }
+          never<HelloReply>()
+        }.onFinalizeCase {
+          cancelled.complete(it)
         }
       }
     )
@@ -377,19 +378,16 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val clientCall = channel.newCall(serverStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val responseChannel = Queue.unbounded<Option<HelloReply>>()
+    val responseChannel = Queue.unbounded<HelloReply>()
 
     clientCall.start(object : ClientCall.Listener<HelloReply>() {
       override fun onMessage(message: HelloReply) {
         // responseChannel.sendBlocking(message)
-        if (responseChannel.tryOffer1(Some(message)))
-          return
-        runBlocking { responseChannel.enqueue1(Some(message)) }
+        if (responseChannel.tryOffer1(message)) Unit
+        else runBlocking { responseChannel.enqueue1(message) }
       }
 
       override fun onClose(status: Status, trailers: Metadata?) {
-        // no need to close it: responseChannel.close()
-        responseChannel.tryOffer1(None)
         processingFinished.complete(Result.success(Unit))
       }
     }, Metadata())
@@ -405,7 +403,6 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(processingFinished.isEmpty()).isTrue()
     clientCall.halfClose()
     assertThat(processingFinished.join()).isEqualTo(Unit)
-    assertThat(responseChannel.tryDequeue1()).isEqualTo(None) // closed with no further responses
   }
 
   @Test
@@ -540,11 +537,11 @@ class ServerCallsTest : AbstractCallsTest() {
       ) { requests: Stream<HelloRequest> ->
         requests.effectMap {
           requestReceived.complete(Unit)
-          guaranteeCase({ never<HelloReply>() }) { case ->
-            cancelled.complete(case)
-            helloReply("Impossible?")
-          }
-        }.compile().lastOrError()
+          never<HelloReply>()
+        }.onFinalizeCase {
+          cancelled.complete(it)
+        }.compile().drain()
+        helloReply("Impossible?")
       }
     )
 
@@ -624,15 +621,12 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(result.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
-  @Test // helloReply("Goodbye") not received by client
+  @Test // works
   fun simpleBidiStreamingPingPong() = runBlocking {
     val channel = makeChannel(
       ServerCalls.bidiStreamingServerMethodDefinition(context, bidiStreamingSayHelloMethod) { requests ->
         requests.map { helloReply("Hello, ${it.name}") }
-          .onFinalizeCase {
-            // Is this being streamed?
-            Stream(helloReply("Goodbye"))
-          }
+          .append { Stream(helloReply("Goodbye")) }
       }
     )
 
@@ -664,9 +658,9 @@ class ServerCallsTest : AbstractCallsTest() {
       ) { requests: Stream<HelloRequest> ->
         requests.effectMap {
           requestReceived.complete(Unit)
-          guaranteeCase({ never<HelloReply>() }) { case ->
-            cancelled.complete(case)
-          }
+          never<HelloReply>()
+        }.onFinalizeCase {
+          cancelled.complete(it)
         }
       }
     )
