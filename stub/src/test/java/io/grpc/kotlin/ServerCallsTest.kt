@@ -49,7 +49,6 @@ import io.grpc.StatusRuntimeException
 import io.grpc.examples.helloworld.GreeterGrpc
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
-import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
@@ -807,7 +806,6 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(stub.sayHello(helloRequest("Peridot"))).isEqualTo(helloReply("Hello, Peridot"))
   }
 
-  @Ignore
   @Test
   fun serverStreamingFlowControl() = runBlocking {
     val receiveFirstMessage = Promise<Unit>()

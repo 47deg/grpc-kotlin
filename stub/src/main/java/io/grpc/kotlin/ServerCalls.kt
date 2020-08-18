@@ -208,7 +208,7 @@ object ServerCalls {
     call.sendHeaders(GrpcMetadata())
 
     val readiness = Readiness { call.isReady }
-    val requestsChannel = Queue.unsafeBounded<RequestT>(1)
+    val requestsChannel = Queue.unsafeBounded<Option<RequestT>>(1)
 
     // We complete this latch when processing requests fails, or when we halfClose.
     // Check `isEmpty` to check if we're still taking requests.
@@ -219,7 +219,7 @@ object ServerCalls {
       .flatMap {
         requestsChannel
           .dequeue()
-          .interruptWhen { Either.Right(isActive.join()) }
+          .terminateOnNone()
           // For every value we receive, we need to request the next one
           .effectTap { call.request(1) }
       }.onFinalizeCase { ex ->
@@ -271,16 +271,12 @@ object ServerCalls {
       override fun onCancel() {
         println("ServerCall.Listener.onCancel()")
         rpcCancelToken.invoke()
-        // TODO promise have to be completed?
-//        if (isActive.isEmpty())
-//          isActive.complete(Result.failure(CancellationException()))
-//        requestsChannel.tryOffer1(None)
+        requestsChannel.tryOffer1(None)
       }
 
       override fun onMessage(message: RequestT) {
         println("ServerCall.Listener.onMessage($message)")
-        //if (isActive.isEmpty() && !requestsChannel.tryOffer1(Some(message))) {
-        if (isActive.isEmpty() && !requestsChannel.tryOffer1(message)) {
+        if (isActive.isEmpty() && !requestsChannel.tryOffer1(Some(message))) {
           throw Status.INTERNAL
             .withDescription("onMessage should never be called when requestsChannel is unready")
             .asException()
@@ -295,7 +291,7 @@ object ServerCalls {
         println("ServerCall.Listener.onHalfClose()")
         isActive.complete(Result.success(Unit))
         // close the queue
-//        requestsChannel.tryOffer1(None)
+        requestsChannel.tryOffer1(None)
       }
 
       override fun onReady() {
