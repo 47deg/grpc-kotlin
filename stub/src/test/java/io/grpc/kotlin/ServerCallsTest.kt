@@ -79,7 +79,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(stub.sayHello(helloRequest("Pearl"))).isEqualTo(helloReply("Hello, Pearl"))
   }
 
-  @Test // works executed individually
+  @Test // works
   fun unaryMethodCancellationPropagatedToServer() = runBlocking {
     val request = Promise<HelloRequest>()
     val cancelled = Promise<ExitCase>()
@@ -290,7 +290,7 @@ class ServerCallsTest : AbstractCallsTest() {
       ).inOrder()
   }
 
-  @Test // executed individually it works :S
+  @Test // works executed individually
   fun serverStreamingCancellationPropagatedToServer() = runBlocking {
     val requestReceived = Promise<Unit>()
     val cancelled = Promise<ExitCase>()
@@ -528,7 +528,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(response.join()).isEqualTo(helloReply("Hello, Lapis and Peridot"))
   }
 
-  @Test // executed individually it works :S
+  @Test // works executed individually
   fun clientStreamingCancellationPropagatedToServer() = runBlocking {
     val requestReceived = Promise<Unit>()
     val cancelled = Promise<ExitCase>()
@@ -553,7 +553,7 @@ class ServerCallsTest : AbstractCallsTest() {
     val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata?) {
+        override fun onClose(status: Status, trailers: Metadata) {
           closeStatus.complete(Result.success(status))
         }
       },
