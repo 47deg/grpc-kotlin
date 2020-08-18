@@ -226,17 +226,9 @@ object ServerCalls {
         println("ServerCall.Requests.onFinalizeCase: $ex")
         when (ex) {
           is ExitCase.Failure -> call.request(1) // make sure we don't cause backpressure
+          // TODO this should be added ?
+          // is ExitCase.Cancelled -> call.request(1) // make sure we don't cause backpressure
           else -> Unit
-//          else -> {
-//            if (!isActive.isEmpty()) {
-//              val result = isActive.tryGet()
-//              if (result != null) {
-//                result.fold({ }, {
-//                  throw result.exceptionOrNull()!!
-//                })
-//              }
-//            }
-//          }
         }
       }
 
@@ -251,15 +243,10 @@ object ServerCalls {
         }.onFinalizeCase { case ->
           println("ServerCalls.Server.onFinalizeCase: $case")
           when (case) {
-            ExitCase.Completed -> {
-              isActive.join() // Before closing the call we need to await the call calling onHalfClosed.
-              call.close(Status.OK, GrpcMetadata())
-            }
-            ExitCase.Cancelled -> {
-              isActive.join() // Before closing the call we need to await the call calling onHalfClosed.
-              call.close(Status.CANCELLED, GrpcMetadata())
-            }
-            is ExitCase.Failure -> call.close(Status.fromThrowable(case.failure), Status.trailersFromThrowable(case.failure))
+            ExitCase.Completed -> call.close(Status.OK, GrpcMetadata())
+            ExitCase.Cancelled -> call.close(Status.CANCELLED, GrpcMetadata())
+            is ExitCase.Failure ->
+              call.close(Status.fromThrowable(case.failure), Status.trailersFromThrowable(case.failure))
           }
         }
         .attempt() // We have already forwarded any errors in call.close
@@ -271,7 +258,6 @@ object ServerCalls {
       override fun onCancel() {
         println("ServerCall.Listener.onCancel()")
         rpcCancelToken.invoke()
-        requestsChannel.tryOffer1(None)
       }
 
       override fun onMessage(message: RequestT) {

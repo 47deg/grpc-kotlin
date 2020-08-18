@@ -540,12 +540,11 @@ class ServerCallsTest : AbstractCallsTest() {
       ) { requests: Stream<HelloRequest> ->
         requests.effectMap {
           requestReceived.complete(Unit)
-          guaranteeCase({ never<Unit>() }) { case ->
+          guaranteeCase({ never<HelloReply>() }) { case ->
             cancelled.complete(case)
+            helloReply("Impossible?")
           }
-        }.compile().drain()
-
-        helloReply("Impossible?")
+        }.compile().lastOrError()
       }
     )
 
@@ -629,7 +628,11 @@ class ServerCallsTest : AbstractCallsTest() {
   fun simpleBidiStreamingPingPong() = runBlocking {
     val channel = makeChannel(
       ServerCalls.bidiStreamingServerMethodDefinition(context, bidiStreamingSayHelloMethod) { requests ->
-        requests.map { helloReply("Hello, ${it.name}") }.onFinalize { Stream(helloReply("Goodbye")) }
+        requests.map { helloReply("Hello, ${it.name}") }
+          .onFinalizeCase {
+            // Is this being streamed?
+            Stream(helloReply("Goodbye"))
+          }
       }
     )
 
@@ -644,6 +647,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Steven"))
     requests.enqueue1(None)
 
+    // Is this possible if queue has been closed?
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Goodbye"))
     assertThat(responses.tryDequeue1()).isEqualTo(None)
   }
@@ -671,7 +675,7 @@ class ServerCallsTest : AbstractCallsTest() {
     val closeStatus = UnsafePromise<Status>()
     call.start(
       object : ClientCall.Listener<HelloReply>() {
-        override fun onClose(status: Status, trailers: Metadata?) {
+        override fun onClose(status: Status, trailers: Metadata) {
           closeStatus.complete(Result.success(status))
         }
       },
