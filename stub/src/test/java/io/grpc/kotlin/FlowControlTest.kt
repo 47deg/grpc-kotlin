@@ -29,12 +29,11 @@ import arrow.fx.coroutines.stream.terminateOnNone
 import com.google.common.truth.Truth.assertThat
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineName
 import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
+import java.util.concurrent.CancellationException
 
 /** Tests for the flow control of the Kotlin gRPC APIs. */
 @Ignore
