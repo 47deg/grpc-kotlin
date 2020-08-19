@@ -833,7 +833,7 @@ class ServerCallsTest : AbstractCallsTest() {
     val responses: Queue<HelloReply> = ClientCalls.serverStreamingRpc(
       channel,
       serverStreamingSayHelloMethod,
-      multiHelloRequest()
+      multiHelloRequest("simon")
     ).produceIn()
     receiveFirstMessage.get()
     val helloReply1st = responses.dequeue1()
