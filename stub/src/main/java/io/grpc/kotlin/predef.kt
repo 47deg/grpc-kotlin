@@ -3,7 +3,31 @@ package io.grpc.kotlin
 import arrow.fx.coroutines.CancelToken
 import arrow.fx.coroutines.ForkAndForget
 import arrow.fx.coroutines.cancellable
+import arrow.fx.coroutines.stream.Pull
+import arrow.fx.coroutines.stream.Stream
+import arrow.fx.coroutines.stream.flatMap
+import arrow.fx.coroutines.stream.map
+import arrow.fx.coroutines.stream.repeat
+import arrow.fx.coroutines.stream.stream
+import arrow.fx.coroutines.stream.unconsOrNull
 import java.util.concurrent.atomic.AtomicReference
+
+fun <O> Stream<O>.close(terminator: () -> Result<Unit>?): Stream<O> =
+  asPull().repeat { pull ->
+    pull.unconsOrNull().flatMap { uncons ->
+      when (uncons) {
+        null -> Pull.just(null)
+        else -> {
+          val res = terminator()
+          if (res == null) Pull.output(uncons.head).map { uncons.tail }
+          else res.fold(
+            { Pull.output(uncons.head).map { null } },
+            { e -> Pull.output(uncons.head).map { Pull.raiseError(e) } }
+          )
+        }
+      }
+    }
+  }.stream()
 
 /**
  * An eager Promise implementation to bridge results across processes internally.

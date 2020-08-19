@@ -16,7 +16,6 @@
 
 package io.grpc.kotlin
 
-import arrow.core.Either
 import arrow.core.None
 import arrow.core.Option
 import arrow.core.Some
@@ -27,7 +26,6 @@ import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.flatten
 import arrow.fx.coroutines.stream.terminateOnNone
-import arrow.fx.coroutines.stream.terminateOnNull
 import io.grpc.MethodDescriptor
 import io.grpc.MethodDescriptor.MethodType.BIDI_STREAMING
 import io.grpc.MethodDescriptor.MethodType.CLIENT_STREAMING
@@ -211,7 +209,6 @@ object ServerCalls {
     val requestsChannel = Queue.unsafeBounded<Option<RequestT>>(1)
 
     // We complete this latch when processing requests fails, or when we halfClose.
-    // Check `isEmpty` to check if we're still taking requests.
     val isActive = UnsafePromise<Unit>()
 
     // TODO should we request messages in `Chunks` ???
@@ -222,13 +219,10 @@ object ServerCalls {
           .terminateOnNone()
           // For every value we receive, we need to request the next one
           .effectTap { call.request(1) }
-      }.onFinalizeCase { ex ->
-        println("ServerCall.Requests.onFinalizeCase: $ex")
-        when (ex) {
-          is ExitCase.Failure -> call.request(1) // make sure we don't cause backpressure
-          // TODO this should be added ?
-          // is ExitCase.Cancelled -> call.request(1) // make sure we don't cause backpressure
-          else -> Unit
+      }.onFinalizeCase { exitCase ->
+        println("ServerCall.Requests.onFinalizeCase: $exitCase")
+        if (ExitCase.Completed != exitCase) {
+          call.request(1) // make sure we don't cause backpressure
         }
       }
 
