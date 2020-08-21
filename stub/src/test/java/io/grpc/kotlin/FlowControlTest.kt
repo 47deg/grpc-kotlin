@@ -23,9 +23,9 @@ import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.milliseconds
 import arrow.fx.coroutines.sleep
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.terminateOnNone
+import arrow.fx.coroutines.stream.toList
 import com.google.common.truth.Truth.assertThat
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
@@ -131,7 +131,7 @@ class FlowControlTest : AbstractCallsTest() {
     fourth.join() // pulling one element allows the cycle to advance
     requests.enqueue1(Some(helloRequest("Rainbow 2.0")))
     requests.tryOffer1(None)
-    val helloReplyList = responses.dequeue().compile().toList()
+    val helloReplyList = responses.dequeue().toList()
     assertThat(
       helloReplyList
     ).containsExactly(

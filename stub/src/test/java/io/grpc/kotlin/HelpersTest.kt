@@ -2,7 +2,7 @@ package io.grpc.kotlin
 
 import arrow.core.Either
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.compile
+import arrow.fx.coroutines.stream.toList
 import com.google.common.truth.Truth.assertThat
 import io.grpc.Status
 import io.grpc.StatusException
@@ -19,7 +19,6 @@ class HelpersTest : AbstractCallsTest() {
     try {
       Stream.empty<Int>()
         .singleOrStatusStream("request", "")
-        .compile()
         .toList()
     } catch (e: StatusException) {
       assertThat(e.status.code).isEqualTo(Status.Code.INTERNAL)
@@ -33,7 +32,6 @@ class HelpersTest : AbstractCallsTest() {
   fun `Single element stream passes correctly`() = runBlocking {
     val res = Stream(1)
       .singleOrStatusStream("request", "")
-      .compile()
       .toList()
 
     assertThat(res).isEqualTo(listOf(1))
@@ -44,7 +42,6 @@ class HelpersTest : AbstractCallsTest() {
     val res = Either.catch {
       Stream(1, 2, 3)
         .singleOrStatusStream("request", "")
-        .compile()
         .toList()
     }
 

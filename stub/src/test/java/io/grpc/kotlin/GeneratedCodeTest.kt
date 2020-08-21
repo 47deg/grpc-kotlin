@@ -26,9 +26,10 @@ import arrow.fx.coroutines.Promise
 import arrow.fx.coroutines.guaranteeCase
 import arrow.fx.coroutines.never
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.drain
 import arrow.fx.coroutines.stream.terminateOnNone
+import arrow.fx.coroutines.stream.toList
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.extensions.proto.ProtoTruth.assertThat
 import io.grpc.Status
@@ -152,7 +153,7 @@ class GeneratedCodeTest : AbstractCallsTest() {
       override suspend fun clientStreamSayHello(requests: Stream<HelloRequest>): HelloReply {
         return HelloReply.newBuilder()
           .setMessage(
-            requests.compile().toList()
+            requests.toList()
               .joinToString(prefix = "Hello, ", separator = ", ") { it.name }
           ).build()
       }
@@ -178,7 +179,7 @@ class GeneratedCodeTest : AbstractCallsTest() {
           guaranteeCase({ never<HelloReply>() }) { case ->
             serverCancelled.complete(case)
           }
-        }.compile().drain()
+        }.drain()
         throw AssertionError("unreachable")
       }
     })
@@ -224,7 +225,7 @@ class GeneratedCodeTest : AbstractCallsTest() {
       multiHelloRequest("Garnet", "Amethyst", "Pearl")
     )
 
-    assertThat(responses.compile().toList())
+    assertThat(responses.toList())
       .containsExactly(
         helloReply("Hello, Garnet"),
         helloReply("Hello, Amethyst"),
@@ -279,7 +280,7 @@ class GeneratedCodeTest : AbstractCallsTest() {
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet"))
     requests.enqueue1(None)
     // this never finishes
-    val responsesList = responses.dequeue().compile().toList()
+    val responsesList = responses.dequeue().toList()
     assertThat(responsesList).isEmpty()
   }
 
@@ -299,7 +300,7 @@ class GeneratedCodeTest : AbstractCallsTest() {
     requests.enqueue1(Some(helloRequest("Lapis")))
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Lapis"))
     requests.enqueue1(None)
-    assertThat(responses.dequeue().compile().toList()).isEmpty()
+    assertThat(responses.dequeue().toList()).isEmpty()
 //    try {
 //      requests.enqueue1(Some(helloRequest("Jasper")))
 //    } catch (allowed: CancellationException) {

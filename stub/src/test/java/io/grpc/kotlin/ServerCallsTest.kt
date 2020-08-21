@@ -19,6 +19,7 @@ package io.grpc.kotlin
 import arrow.core.None
 import arrow.core.Option
 import arrow.core.Some
+import arrow.fx.coroutines.Atomic
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.IOPool
@@ -30,10 +31,10 @@ import arrow.fx.coroutines.never
 import arrow.fx.coroutines.sleep
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.append
-import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
-import arrow.fx.coroutines.stream.flatten
+import arrow.fx.coroutines.stream.drain
 import arrow.fx.coroutines.stream.terminateOnNone
+import arrow.fx.coroutines.stream.toList
 import com.google.common.truth.Truth.assertThat
 import io.grpc.CallOptions
 import io.grpc.ClientCall
@@ -282,7 +283,7 @@ class ServerCallsTest : AbstractCallsTest() {
       serverStreamingSayHelloMethod,
       multiHelloRequest("Garnet", "Amethyst", "Pearl")
     )
-    val result = responses.compile().toList()
+    val result = responses.toList()
     assertThat(result)
       .containsExactly(
         helloReply("Hello, Garnet"),
@@ -444,7 +445,6 @@ class ServerCallsTest : AbstractCallsTest() {
       ) { requests: Stream<HelloRequest> ->
         helloReply(
           requests
-            .compile()
             .toList().joinToString(separator = ", ", prefix = "Hello, ") { it.name }
         )
       }
@@ -471,7 +471,7 @@ class ServerCallsTest : AbstractCallsTest() {
         context,
         clientStreamingSayHelloMethod
       ) { requests ->
-        val (req1, req2) = requests.take(2).compile().toList()
+        val (req1, req2) = requests.take(2).toList()
         helloReply("Hello, ${req1.name} and ${req2.name}")
       }
     )
@@ -502,9 +502,9 @@ class ServerCallsTest : AbstractCallsTest() {
       ) { requests ->
         // In kotlinx.coroutines take(2) throws AbortFlowException when done and cancels
         // meaning requestsChannel gets closed
-        val (req1, req2) = requests.take(2).compile().toList()
+        val (req1, req2) = requests.take(2).toList()
 //        requests.append { Stream.raiseError<Throwable>(Exception("AbortFlowException")) }
-//          .compile().drain()
+//          .drain()
         barrier.get()
         helloReply("Hello, ${req1.name} and ${req2.name}")
       }
@@ -547,7 +547,7 @@ class ServerCallsTest : AbstractCallsTest() {
           never<HelloReply>()
         }.onFinalizeCase {
           cancelled.complete(it)
-        }.compile().drain()
+        }.drain()
         helloReply("Impossible?")
       }
     )
@@ -821,35 +821,42 @@ class ServerCallsTest : AbstractCallsTest() {
         serverStreamingSayHelloMethod
       ) {
         Stream.effect {
-          val queue = Queue.unbounded<HelloReply>()
-          queue.enqueue1(helloReply("1st"))
-          queue.enqueue1(helloReply("2nd"))
-          val thirdSend = ForkConnected {
-            queue.enqueue1(helloReply("3rd"))
-          }
-          sleep(200.milliseconds)
-          // assertThat(thirdSend.isCompleted).isFalse()
-          receiveFirstMessage.complete(Unit)
-          // this is blocking dequeueing
-          receivedFirstMessage.get()
-          thirdSend.join()
-          queue.dequeue()
-        }.flatten()
+          Pair(Queue.bounded<Option<HelloReply>>(1), Atomic(false))
+        }.flatMap { (queue, thirdSend) ->
+          queue.dequeue().terminateOnNone()
+            .concurrently(Stream.effect {
+              queue.enqueue1(Some(helloReply("1st")))
+              queue.enqueue1(Some(helloReply("2nd")))
+              val thirdSendFiber = ForkConnected {
+                queue.enqueue1(Some(helloReply("3rd")))
+                thirdSend.set(true)
+                queue.enqueue1(None)
+              }
+              sleep(200.milliseconds)
+              assertThat(thirdSend.get()).isFalse()
+              receiveFirstMessage.complete(Unit)
+              receivedFirstMessage.get()
+              thirdSendFiber.join()
+            })
+        }
       }
     )
 
-    val responses: Queue<HelloReply> = ClientCalls.serverStreamingRpc(
-      channel,
-      serverStreamingSayHelloMethod,
-      multiHelloRequest("simon")
-    ).produceIn()
+    val responses: Queue<Option<HelloReply>> = produce<HelloReply> {
+      ClientCalls.serverStreamingRpc(
+        channel,
+        serverStreamingSayHelloMethod,
+        multiHelloRequest("simon")
+      ).effectMap { enqueue1(Some(it)) }
+        .drain()
+    }
     receiveFirstMessage.get()
-    // we are not dequeueing yet so this will never complete
-//    receivedFirstMessage.complete(Unit)
     val helloReply1st = responses.dequeue1()
+    println("helloReply1st: $helloReply1st")
     assertThat(helloReply1st).isEqualTo(helloReply("1st"))
     receivedFirstMessage.complete(Unit)
-    val toList = responses.dequeue().compile().toList()
+    val toList = responses.dequeue().toList()
+    println("responses.dequeue() = $toList")
     assertThat(toList).containsExactly(helloReply("2nd"), helloReply("3rd"))
   }
 

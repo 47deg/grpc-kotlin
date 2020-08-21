@@ -22,8 +22,8 @@ import arrow.core.Some
 import arrow.fx.coroutines.Environment
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.drain
 import arrow.fx.coroutines.stream.flatten
 import arrow.fx.coroutines.stream.terminateOnNone
 import io.grpc.MethodDescriptor
@@ -244,7 +244,6 @@ object ServerCalls {
           }
         }
         .attempt() // We have already forwarded any errors in call.close
-        .compile()
         .drain()
     }
 

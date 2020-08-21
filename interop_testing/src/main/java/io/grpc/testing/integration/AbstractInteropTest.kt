@@ -20,9 +20,11 @@ import arrow.fx.coroutines.Promise
 import arrow.fx.coroutines.milliseconds
 import arrow.fx.coroutines.sleep
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.drain
 import arrow.fx.coroutines.stream.handleErrorWith
+import arrow.fx.coroutines.stream.lastOrError
+import arrow.fx.coroutines.stream.toList
 import com.google.auth.oauth2.ComputeEngineCredentials
 import com.google.auth.oauth2.GoogleCredentials
 import com.google.auth.oauth2.OAuth2Credentials
@@ -451,7 +453,7 @@ abstract class AbstractInteropTest {
         .build()
     )
     runBlocking {
-      assertResponses(goldenResponses, stub.streamingOutputCall(request).compile().toList())
+      assertResponses(goldenResponses, stub.streamingOutputCall(request).toList())
     }
   }
 
@@ -542,7 +544,7 @@ abstract class AbstractInteropTest {
         .build()
     )
     runBlocking {
-      assertResponses(goldenResponses, stub.streamingOutputCall(request).compile().toList())
+      assertResponses(goldenResponses, stub.streamingOutputCall(request).toList())
     }
   }
 
@@ -618,14 +620,14 @@ abstract class AbstractInteropTest {
     )
     runBlocking {
       // TODO: per-element timeout
-      assertResponses(goldenResponses, stub.fullDuplexCall(requests).compile().toList())
+      assertResponses(goldenResponses, stub.fullDuplexCall(requests).toList())
     }
   }
 
   @Test
   fun emptyStream() {
     runBlocking {
-      assertResponses(listOf(), stub.fullDuplexCall(Stream()).compile().toList())
+      assertResponses(listOf(), stub.fullDuplexCall(Stream()).toList())
     }
   }
 
@@ -664,7 +666,7 @@ abstract class AbstractInteropTest {
               request
               throw CancellationException()
             }
-          ).compile().drain()
+          ).drain()
       }
       assertThat(ex.status.code).isEqualTo(Status.Code.CANCELLED)
     }
@@ -685,7 +687,7 @@ abstract class AbstractInteropTest {
     val responses = runBlocking {
       stub.fullDuplexCall(
         Stream.range(1..numRequests).map { request }
-      ).compile().toList()
+      ).toList()
     }
     assertEquals(responseSizes.size * numRequests, responses.size)
     for ((ix, response) in responses.withIndex()) {
@@ -714,7 +716,7 @@ abstract class AbstractInteropTest {
 
     val numRequests = 10
     val responses = runBlocking {
-      stub.halfDuplexCall(Stream.range(1..numRequests).map { request }).compile().toList()
+      stub.halfDuplexCall(Stream.range(1..numRequests).map { request }).toList()
     }
     assertEquals(responseSizes.size * numRequests, responses.size)
     for ((ix, response) in responses.withIndex()) {
@@ -870,7 +872,7 @@ abstract class AbstractInteropTest {
 
     val numRequests = 10
     val responses = runBlocking {
-      stub.fullDuplexCall(Stream.range(1..numRequests).map { request }).compile().toList()
+      stub.fullDuplexCall(Stream.range(1..numRequests).map { request }).toList()
     }
     assertEquals(responseSizes.size * numRequests, responses.size)
     // Assert that our side channel object is echoed back in both headers and trailers
@@ -893,7 +895,7 @@ abstract class AbstractInteropTest {
             )
             .build()
         )
-        .first()
+        .first { true }
     }
   }
 
@@ -909,7 +911,7 @@ abstract class AbstractInteropTest {
         )
         .build()
       try {
-        stub.withDeadlineAfter(100, TimeUnit.MILLISECONDS).streamingOutputCall(request).first()
+        stub.withDeadlineAfter(100, TimeUnit.MILLISECONDS).streamingOutputCall(request).first { true }
         fail("Expected deadline to be exceeded")
       } catch (ex: StatusException) {
         assertEquals(Status.DEADLINE_EXCEEDED.code, ex.status.code)
@@ -945,7 +947,7 @@ abstract class AbstractInteropTest {
         stub
           .withDeadlineAfter(30, TimeUnit.MILLISECONDS)
           .streamingOutputCall(request)
-          .compile().drain()
+          .drain()
       }
       assertEquals(Status.DEADLINE_EXCEEDED.code, statusEx.status.code)
       assertStatsTrace("grpc.testing.TestService/EmptyCall", Status.Code.OK)
@@ -1056,7 +1058,7 @@ abstract class AbstractInteropTest {
       assertResponse(goldenResponses[2], responses.dequeue1())
       // assertFalse(responses.isClosedForReceive) TODO replacement of this?
       // requestChannel.close()
-      assertThat(responses.dequeue().compile().toList()).isEmpty()
+      assertThat(responses.dequeue().toList()).isEmpty()
     }
   }
 
@@ -1123,7 +1125,7 @@ abstract class AbstractInteropTest {
     trailersCapture = AtomicReference()
     theStreamingStub = MetadataUtils.captureMetadata(theStreamingStub, headersCapture, trailersCapture)
     runBlocking {
-      assertResponse(goldenStreamingResponse, theStreamingStub.fullDuplexCall(Stream(streamingRequest)).compile().lastOrError())
+      assertResponse(goldenStreamingResponse, theStreamingStub.fullDuplexCall(Stream(streamingRequest)).lastOrError())
     }
     assertEquals(
       "test_initial_metadata_value",
@@ -1166,7 +1168,7 @@ abstract class AbstractInteropTest {
       assertStatsTrace("grpc.testing.TestService/UnaryCall", Status.Code.UNKNOWN)
       // Test FullDuplexCall
       val status = assertFailsWith<StatusException> {
-        stub.fullDuplexCall(Stream(streamingRequest)).compile().drain()
+        stub.fullDuplexCall(Stream(streamingRequest)).drain()
       }.status
       assertEquals(Status.UNKNOWN.code, status.code)
       assertEquals(errorMessage, status.description)
@@ -1247,7 +1249,7 @@ abstract class AbstractInteropTest {
         .handleErrorWith {
           Stream.effect { caught.complete(it) }
           Stream.raiseError(it)
-        }.compile().toList()
+        }.toList()
       assertThat(responses).isEmpty()
       assertEquals(Status.DEADLINE_EXCEEDED.code, (caught.get() as StatusException).status.code)
     }

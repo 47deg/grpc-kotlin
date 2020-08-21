@@ -21,9 +21,11 @@ import arrow.core.Option
 import arrow.core.Some
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.drain
+import arrow.fx.coroutines.stream.firstOrError
 import arrow.fx.coroutines.stream.terminateOnNone
+import arrow.fx.coroutines.stream.toList
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.extensions.proto.ProtoTruth.assertThat
 import io.grpc.CallOptions
@@ -270,7 +272,7 @@ class ClientCallsTest : AbstractCallsTest() {
       request = multiHelloRequest("Cindy", "Jeff", "Aki")
     )
 
-    val helloReplies = rpc.compile().toList()
+    val helloReplies = rpc.toList()
     println("helloReplies: $helloReplies")
     assertThat(helloReplies).containsExactly(
       helloReply("Hello, Cindy"), helloReply("Hello, Jeff"), helloReply("Hello, Aki")
@@ -306,7 +308,7 @@ class ClientCallsTest : AbstractCallsTest() {
       rpc.effectMap {
         serverReceived.join()
         throw CancellationException("no longer needed")
-      }.compile().drain()
+      }.drain()
     }
     serverCancelled.join()
   }
@@ -567,7 +569,7 @@ class ClientCallsTest : AbstractCallsTest() {
     )
 
     assertThrows<MyException> {
-      responses.compile().drain()
+      responses.drain()
     }
   }
 
@@ -608,8 +610,8 @@ class ClientCallsTest : AbstractCallsTest() {
       requests = requests
     )
 
-    assertThat(responses.first().compile().lastOrError()).isEqualTo(helloReply("Hello, Sunstone"))
-    assertThat(responses.first().compile().lastOrError()).isEqualTo(helloReply("Hello, Sunstone"))
+    assertThat(responses.firstOrError()).isEqualTo(helloReply("Hello, Sunstone"))
+    assertThat(responses.firstOrError()).isEqualTo(helloReply("Hello, Sunstone"))
     assertThat(requestsEvaluations.get()).isEqualTo(2)
   }
 }

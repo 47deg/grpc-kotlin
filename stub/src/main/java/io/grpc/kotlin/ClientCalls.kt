@@ -21,8 +21,8 @@ import arrow.core.Option
 import arrow.core.Some
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.compile
 import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.drain
 import arrow.fx.coroutines.stream.flatten
 import arrow.fx.coroutines.stream.terminateOnNone
 import io.grpc.CallOptions
@@ -249,7 +249,7 @@ object ClientCalls {
           clientCall.sendMessage(request)
           println("ClientCalls.Flowing.requestStream.effectMap.suspendUntilReady")
           readiness.suspendUntilReady()
-        }.compile().drain()
+        }.drain()
       }
     }
   }

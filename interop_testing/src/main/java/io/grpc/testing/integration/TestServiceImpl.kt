@@ -16,7 +16,7 @@
 package io.grpc.testing.integration
 
 import arrow.fx.coroutines.stream.Stream
-import arrow.fx.coroutines.stream.compile
+import arrow.fx.coroutines.stream.lastOrError
 import com.google.protobuf.ByteString
 import io.grpc.ForwardingServerCall
 import io.grpc.Metadata
@@ -118,7 +118,7 @@ class TestServiceImpl(
       echoRequestMetadataInTrailers(Util.ECHO_TRAILING_METADATA_KEY)
     )
 
-    suspend fun Stream<Int>.sum() = fold(0) { a, b -> a + b }.compile().lastOrError()
+    suspend fun Stream<Int>.sum() = fold(0) { a, b -> a + b }.lastOrError()
 
     /**
      * Generates a payload of desired type and size. Reads compressableBuffer or
