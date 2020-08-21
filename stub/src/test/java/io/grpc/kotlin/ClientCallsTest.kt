@@ -48,7 +48,7 @@ class ClientCallsTest : AbstractCallsTest() {
   /**
    * Verifies that a simple unary RPC successfully returns results to a suspend function.
    */
-  @Test // works
+  @Test
   fun simpleUnary(): Unit = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun sayHello(request: HelloRequest, responseObserver: StreamObserver<HelloReply>) {
@@ -165,7 +165,7 @@ class ClientCallsTest : AbstractCallsTest() {
    * Verify that cancelling a coroutine job that includes the RPC as a subtask propagates the
    * cancellation to the server.
    */
-  @Test // works
+  @Test
   fun unaryCancelCoroutinePropagatesToServer() = runBlocking {
     // Completes if and only if the server processes cancellation.
     val serverReceived = UnsafePromise<Unit>()
@@ -214,7 +214,7 @@ class ClientCallsTest : AbstractCallsTest() {
     assertThat(ex.status.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
-  @Test // works
+  @Test
   fun unaryRejectsNonUnaryMethod() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {}
 
@@ -231,7 +231,7 @@ class ClientCallsTest : AbstractCallsTest() {
     Unit
   }
 
-  @Test // works
+  @Test
   fun serverStreamingRejectsNonServerStreamingMethod() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {}
 
@@ -248,7 +248,7 @@ class ClientCallsTest : AbstractCallsTest() {
     Unit
   }
 
-  @Test // works
+  @Test
   fun simpleServerStreamingRpc() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun serverStreamSayHello(
@@ -277,7 +277,7 @@ class ClientCallsTest : AbstractCallsTest() {
     ).inOrder()
   }
 
-  @Test // works
+  @Test
   fun serverStreamingRpcCancellation() = runBlocking {
     val serverCancelled = UnsafePromise<Unit>()
     val serverReceived = UnsafePromise<Unit>()
@@ -311,7 +311,7 @@ class ClientCallsTest : AbstractCallsTest() {
     serverCancelled.join()
   }
 
-  @Test // works
+  @Test
   fun simpleClientStreamingRpc() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun clientStreamSayHello(
@@ -351,7 +351,7 @@ class ClientCallsTest : AbstractCallsTest() {
     assertThat(helloReply).isEqualTo(helloReply("Hello, Tim, Jim"))
   }
 
-  @Test // works
+  @Test
   fun clientStreamingRpcReturnsEarly() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun clientStreamSayHello(
@@ -406,7 +406,7 @@ class ClientCallsTest : AbstractCallsTest() {
     //requests.enqueue1(helloRequest("John"))
   }
 
-  @Test // works
+  @Test
   fun clientStreamingRpcCancelled() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun clientStreamSayHello(
@@ -450,7 +450,7 @@ class ClientCallsTest : AbstractCallsTest() {
     // }
   }
 
-  @Test // works
+  @Test
   fun simpleBidiStreamingRpc() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun bidiStreamSayHello(
@@ -539,7 +539,7 @@ class ClientCallsTest : AbstractCallsTest() {
     // }
   }
 
-  @Test // works
+  @Test
   fun bidiStreamingRpcRequestsFail() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun bidiStreamSayHello(
@@ -573,7 +573,7 @@ class ClientCallsTest : AbstractCallsTest() {
 
   private class MyException : Exception()
 
-  @Test // works
+  @Test
   fun bidiStreamingRpcCollectsRequestsEachTime() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun bidiStreamSayHello(

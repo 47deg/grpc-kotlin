@@ -3,13 +3,12 @@ package io.grpc.kotlin
 import com.google.common.truth.Truth.assertThat
 import io.grpc.ServerCall
 import io.grpc.ServerInterceptors
-import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterCoroutineImplBase
 import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterArrowCoroutineStub
+import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterCoroutineImplBase
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
-import org.junit.Rule
+import org.junit.Ignore
 import org.junit.Test
-import org.junit.rules.Timeout
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 import kotlin.coroutines.CoroutineContext
@@ -18,11 +17,13 @@ import kotlin.coroutines.coroutineContext
 import io.grpc.Metadata as GrpcMetadata
 
 /** Tests for [CoroutineContextServerInterceptor]. */
+@Ignore
 @RunWith(JUnit4::class)
 class CoroutineContextServerInterceptorTest : AbstractCallsTest() {
 
   class ArbitraryContextElement(val message: String = "") : CoroutineContext.Element {
     companion object Key : CoroutineContext.Key<ArbitraryContextElement>
+
     override val key: CoroutineContext.Key<*>
       get() = Key
   }

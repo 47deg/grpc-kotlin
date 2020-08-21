@@ -241,13 +241,13 @@ object ClientCalls {
         clientCall: ClientCall<RequestT, *>,
         readiness: Readiness
       ) {
-        println("Flowing.suspendUntilReady")
+        println("ClientCalls.Flowing.suspendUntilReady")
         readiness.suspendUntilReady()
-        println("Flowing.requestStream.effectMap")
+        println("ClientCalls.Flowing.requestStream.effectMap")
         requestStream.effectMap { request: RequestT ->
-          println("Flowing.requestStream.effectMap.sendMessage: $request")
+          println("ClientCalls.Flowing.requestStream.effectMap.sendMessage: $request")
           clientCall.sendMessage(request)
-          println("Flowing.requestStream.effectMap.suspendUntilReady")
+          println("ClientCalls.Flowing.requestStream.effectMap.suspendUntilReady")
           readiness.suspendUntilReady()
         }.compile().drain()
       }

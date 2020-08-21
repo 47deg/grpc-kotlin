@@ -40,14 +40,11 @@ import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterCoroutineImplBase
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
 import io.grpc.examples.helloworld.MultiHelloRequest
-import kotlinx.coroutines.cancel
 import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
-import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.EmptyCoroutineContext
 
 @RunWith(JUnit4::class)
 class GeneratedCodeTest : AbstractCallsTest() {
@@ -280,7 +277,7 @@ class GeneratedCodeTest : AbstractCallsTest() {
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Steven"))
     requests.enqueue1(Some(helloRequest("Garnet")))
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet"))
-    requests.tryOffer1(None)
+    requests.enqueue1(None)
     // this never finishes
     val responsesList = responses.dequeue().compile().toList()
     assertThat(responsesList).isEmpty()
@@ -301,7 +298,7 @@ class GeneratedCodeTest : AbstractCallsTest() {
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Peridot"))
     requests.enqueue1(Some(helloRequest("Lapis")))
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Lapis"))
-    requests.tryOffer1(None)
+    requests.enqueue1(None)
     assertThat(responses.dequeue().compile().toList()).isEmpty()
 //    try {
 //      requests.enqueue1(Some(helloRequest("Jasper")))
@@ -332,7 +329,7 @@ class GeneratedCodeTest : AbstractCallsTest() {
       assertThat(ex.status.code).isEqualTo(Status.Code.CANCELLED)
     }
     serverReceived.get()
-    serverJob.cancel()
+    //serverJob.cancel()
     test.join()
   }
 

@@ -66,7 +66,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
   val context = CoroutineName("server context")
 
-  @Test // works
+  @Test
   fun simpleUnaryMethod() = runBlocking {
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) { request: HelloRequest ->
@@ -80,7 +80,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(stub.sayHello(helloRequest("Pearl"))).isEqualTo(helloReply("Hello, Pearl"))
   }
 
-  @Test // works
+  @Test
   fun unaryMethodCancellationPropagatedToServer() = runBlocking {
     val request = Promise<HelloRequest>()
     val cancelled = Promise<ExitCase>()
@@ -141,7 +141,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(closeStatusResult.code).isEqualTo(Status.Code.OK)
   }
 
-  @Test // works
+  @Test
   fun unaryMethodReceivedTooManyRequests() = runBlocking {
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
@@ -253,7 +253,7 @@ class ServerCallsTest : AbstractCallsTest() {
 
   class MyException : Exception()
 
-  @Test // works
+  @Test
   fun unaryMethodThrowsException() = runBlocking {
     val channel = makeChannel(
       ServerCalls.unaryServerMethodDefinition(context, sayHelloMethod) {
@@ -269,7 +269,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(ex.status.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
-  @Test // works
+  @Test
   fun simpleServerStreaming() = runBlocking {
     val channel = makeChannel(
       ServerCalls.serverStreamingServerMethodDefinition(context, serverStreamingSayHelloMethod) {
@@ -291,7 +291,7 @@ class ServerCallsTest : AbstractCallsTest() {
       ).inOrder()
   }
 
-  @Test // works
+  @Test
   fun serverStreamingCancellationPropagatedToServer() = runBlocking {
     val requestReceived = Promise<Unit>()
     val cancelled = Promise<ExitCase>()
@@ -435,7 +435,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(status.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
-  @Test // works
+  @Test
   fun simpleClientStreaming() = runBlocking {
     val channel = makeChannel(
       ServerCalls.clientStreamingServerMethodDefinition(
@@ -491,21 +491,28 @@ class ServerCallsTest : AbstractCallsTest() {
     ).isEqualTo(helloReply("Hello, Peridot and Lapis"))
   }
 
-  @Test // fails
+  @Test
   fun clientStreamingWhenRequestsCancelledNoBackpressure() = runBlocking {
-    val latch = Promise<Unit>()
+    val barrier = Promise<Unit>()
 
     val channel = makeChannel(
       ServerCalls.clientStreamingServerMethodDefinition(
         context,
         clientStreamingSayHelloMethod
       ) { requests ->
+        // In kotlinx.coroutines take(2) throws AbortFlowException when done and cancels
+        // meaning requestsChannel gets closed
         val (req1, req2) = requests.take(2).compile().toList()
-        latch.get()
+//        requests.append { Stream.raiseError<Throwable>(Exception("AbortFlowException")) }
+//          .compile().drain()
+        barrier.get()
         helloReply("Hello, ${req1.name} and ${req2.name}")
       }
     )
 
+    // first request is never consumed with Queue.bounded<HelloRequest>(0)
+    // val requestChannel = Queue.bounded<HelloRequest>(0)
+    // val requestChannel = Queue.bounded<HelloRequest>(1)
     val requestChannel = Queue.unbounded<HelloRequest>()
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
@@ -521,11 +528,11 @@ class ServerCallsTest : AbstractCallsTest() {
       requestChannel.enqueue1(helloRequest("Ruby"))
     }
 
-    latch.complete(Unit)
+    barrier.complete(Unit)
     assertThat(response.join()).isEqualTo(helloReply("Hello, Lapis and Peridot"))
   }
 
-  @Test // works executed individually
+  @Test
   fun clientStreamingCancellationPropagatedToServer() = runBlocking {
     val requestReceived = Promise<Unit>()
     val cancelled = Promise<ExitCase>()
@@ -621,7 +628,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(result.code).isEqualTo(Status.Code.UNKNOWN)
   }
 
-  @Test // works
+  @Test
   fun simpleBidiStreamingPingPong() = runBlocking {
     val channel = makeChannel(
       ServerCalls.bidiStreamingServerMethodDefinition(context, bidiStreamingSayHelloMethod) { requests ->
@@ -646,7 +653,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(responses.tryDequeue1()).isEqualTo(None)
   }
 
-  @Test // works executed individually
+  @Test
   fun bidiStreamingCancellationPropagatedToServer() = runBlocking {
     val requestReceived = Promise<Unit>()
     val cancelled = Promise<ExitCase>()
@@ -804,7 +811,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(stub.sayHello(helloRequest("Peridot"))).isEqualTo(helloReply("Hello, Peridot"))
   }
 
-  @Test
+  @Test // bad translation from channelFlow
   fun serverStreamingFlowControl() = runBlocking {
     val receiveFirstMessage = Promise<Unit>()
     val receivedFirstMessage = Promise<Unit>()
@@ -823,6 +830,7 @@ class ServerCallsTest : AbstractCallsTest() {
           sleep(200.milliseconds)
           // assertThat(thirdSend.isCompleted).isFalse()
           receiveFirstMessage.complete(Unit)
+          // this is blocking dequeueing
           receivedFirstMessage.get()
           thirdSend.join()
           queue.dequeue()
@@ -836,6 +844,8 @@ class ServerCallsTest : AbstractCallsTest() {
       multiHelloRequest("simon")
     ).produceIn()
     receiveFirstMessage.get()
+    // we are not dequeueing yet so this will never complete
+//    receivedFirstMessage.complete(Unit)
     val helloReply1st = responses.dequeue1()
     assertThat(helloReply1st).isEqualTo(helloReply("1st"))
     receivedFirstMessage.complete(Unit)
