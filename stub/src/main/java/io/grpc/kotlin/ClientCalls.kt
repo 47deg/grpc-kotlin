@@ -317,16 +317,15 @@ object ClientCalls {
         .effectTap {
           println("ClientCalls.responses.dequeue.effectTap: clientCall.request(1)")
           clientCall.request(1)
-        }
-
-    }.concurrently(
-      Stream.effect {
-        println("ClientCalls.concurrently: request.sendTo(clientCall, readiness)")
-        request.sendTo(clientCall, readiness)
-        println("ClientCalls.concurrently: clientCall.halfClose()")
-        clientCall.halfClose()
-      }
-    ).onFinalizeCase { ex ->
+        }.concurrently(
+          Stream.effect {
+            println("ClientCalls.concurrently: request.sendTo(clientCall, readiness)")
+            request.sendTo(clientCall, readiness)
+            println("ClientCalls.concurrently: clientCall.halfClose()")
+            clientCall.halfClose()
+          }
+        )
+    }.onFinalizeCase { ex ->
       println("ClientCalls.onFinalizeCase: $ex")
       when (ex) {
         is ExitCase.Cancelled -> clientCall.cancel("Collection of requests was cancelled", null)

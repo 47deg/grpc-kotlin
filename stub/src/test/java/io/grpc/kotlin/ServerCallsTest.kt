@@ -19,7 +19,7 @@ package io.grpc.kotlin
 import arrow.core.None
 import arrow.core.Option
 import arrow.core.Some
-import arrow.fx.coroutines.Atomic
+import arrow.core.getOrElse
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.IOPool
@@ -33,6 +33,7 @@ import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.append
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.drain
+import arrow.fx.coroutines.stream.filterOption
 import arrow.fx.coroutines.stream.terminateOnNone
 import arrow.fx.coroutines.stream.toList
 import com.google.common.truth.Truth.assertThat
@@ -821,19 +822,19 @@ class ServerCallsTest : AbstractCallsTest() {
         serverStreamingSayHelloMethod
       ) {
         Stream.effect {
-          Pair(Queue.bounded<Option<HelloReply>>(1), Atomic(false))
+          Pair(Queue.unbounded<Option<HelloReply>>(), UnsafePromise<Unit>())
         }.flatMap { (queue, thirdSend) ->
-          queue.dequeue().terminateOnNone()
+          queue.dequeue().buffer(1).terminateOnNone()
             .concurrently(Stream.effect {
               queue.enqueue1(Some(helloReply("1st")))
               queue.enqueue1(Some(helloReply("2nd")))
               val thirdSendFiber = ForkConnected {
                 queue.enqueue1(Some(helloReply("3rd")))
-                thirdSend.set(true)
+                thirdSend.complete(Result.success(Unit))
                 queue.enqueue1(None)
               }
               sleep(200.milliseconds)
-              assertThat(thirdSend.get()).isFalse()
+              assertThat(thirdSend.tryGet()).isNull()
               receiveFirstMessage.complete(Unit)
               receivedFirstMessage.get()
               thirdSendFiber.join()
@@ -853,9 +854,9 @@ class ServerCallsTest : AbstractCallsTest() {
     receiveFirstMessage.get()
     val helloReply1st = responses.dequeue1()
     println("helloReply1st: $helloReply1st")
-    assertThat(helloReply1st).isEqualTo(helloReply("1st"))
+    assertThat(helloReply1st.getOrElse { null }).isEqualTo(helloReply("1st"))
     receivedFirstMessage.complete(Unit)
-    val toList = responses.dequeue().toList()
+    val toList = responses.dequeue().filterOption().toList()
     println("responses.dequeue() = $toList")
     assertThat(toList).containsExactly(helloReply("2nd"), helloReply("3rd"))
   }

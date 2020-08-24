@@ -36,6 +36,8 @@ import io.grpc.ServerCallHandler
 import io.grpc.ServerMethodDefinition
 import io.grpc.Status
 import io.grpc.StatusException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.CancellationException
 import kotlin.coroutines.CoroutineContext
 import io.grpc.Metadata as GrpcMetadata
@@ -228,19 +230,22 @@ object ServerCalls {
 
     // Runs async cancellable on the provided context, always returns a new cancellable scope.
     val rpcCancelToken = Environment(context).unsafeRunAsyncCancellable {
+      val mutex = Mutex()
       Stream.effect { implementation(requests) }.flatten()
         .effectMap { response: ResponseT ->
           println("ServerCalls.Server.effectMap.suspendUntilReady")
           readiness.suspendUntilReady()
           println("ServerCalls.Server.effectMap.sendMessage: $response")
-          call.sendMessage(response)
+          mutex.withLock { call.sendMessage(response) }
         }.onFinalizeCase { case ->
           println("ServerCalls.Server.onFinalizeCase: $case")
-          when (case) {
-            ExitCase.Completed -> call.close(Status.OK, GrpcMetadata())
-            ExitCase.Cancelled -> call.close(Status.CANCELLED, GrpcMetadata())
-            is ExitCase.Failure ->
-              call.close(Status.fromThrowable(case.failure), Status.trailersFromThrowable(case.failure))
+          mutex.withLock {
+            when (case) {
+              ExitCase.Completed -> call.close(Status.OK, GrpcMetadata())
+              ExitCase.Cancelled -> call.close(Status.CANCELLED, GrpcMetadata())
+              is ExitCase.Failure ->
+                call.close(Status.fromThrowable(case.failure), Status.trailersFromThrowable(case.failure))
+            }
           }
         }
         .attempt() // We have already forwarded any errors in call.close

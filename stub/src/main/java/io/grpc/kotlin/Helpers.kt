@@ -18,7 +18,6 @@ package io.grpc.kotlin
 
 import arrow.core.None
 import arrow.core.Option
-import arrow.core.Some
 import arrow.fx.coroutines.ForkAndForget
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.stream.Pull
@@ -28,9 +27,7 @@ import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.drain
 import arrow.fx.coroutines.stream.firstOrNull
 import arrow.fx.coroutines.stream.flatMap
-import arrow.fx.coroutines.stream.lastOrNull
 import arrow.fx.coroutines.stream.stream
-import arrow.fx.coroutines.stream.terminateOnNone
 import arrow.fx.coroutines.stream.unconsOrNull
 import io.grpc.Status
 import io.grpc.StatusException
@@ -92,9 +89,13 @@ internal suspend fun <T> Stream<T>.singleOrStatus(
   descriptor: Any
 ): T = singleOrStatusStream(expected, descriptor).firstOrNull()!!
 
+// Same as Channel(BUFFERED)
 suspend fun <T> Stream<T>.produceIn(): Queue<T> {
   val queue = Queue.unbounded<T>()
   ForkConnected {
+//    effectMap {
+//      queue.enqueue1(it)
+//    }.drain()
     fold(Unit) { _, item: T ->
       queue.tryOffer1(item)
     }.drain()
@@ -102,16 +103,9 @@ suspend fun <T> Stream<T>.produceIn(): Queue<T> {
   return queue
 }
 
-suspend fun <T> Stream<Option<T>>.produceIn2(): Queue<Option<T>> {
-  val queue = Queue.bounded<Option<T>>(0)
-  terminateOnNone().effectMap { item: T ->
-    queue.enqueue1(Some(item))
-  }.drain()
-  return queue
-}
-
+// RENDEZVOUS
 suspend fun <E> produce(block: suspend Enqueue<Option<E>>.() -> Unit): Queue<Option<E>> {
-  val queue = Queue.unsafeBounded<Option<E>>(0)
+  val queue = Queue.unsafeBounded<Option<E>>(1)
   ForkAndForget {
     queue.block()
     queue.enqueue1(None)

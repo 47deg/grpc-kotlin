@@ -390,7 +390,7 @@ class ClientCallsTest : AbstractCallsTest() {
     channel = makeChannel(serverImpl)
 
 //    val requests = Queue.bounded<HelloRequest>(0)
-    val requests = Queue.unbounded<HelloRequest>()
+    val requests = Queue.bounded<HelloRequest>(1)
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel = channel,
@@ -408,7 +408,7 @@ class ClientCallsTest : AbstractCallsTest() {
     //requests.enqueue1(helloRequest("John"))
   }
 
-  @Test
+  @Test // no output?
   fun clientStreamingRpcCancelled() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun clientStreamSayHello(
@@ -436,6 +436,7 @@ class ClientCallsTest : AbstractCallsTest() {
     channel = makeChannel(serverImpl)
 
 //    val requests = Queue.bounded<HelloRequest>(0)
+//    val requests = Queue.bounded<HelloRequest>(1)
     val requests = Queue.unbounded<HelloRequest>()
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
