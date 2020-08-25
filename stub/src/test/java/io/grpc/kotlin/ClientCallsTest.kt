@@ -86,7 +86,7 @@ class ClientCallsTest : AbstractCallsTest() {
    * Verify that a unary RPC that does not respond within a timeout specified by [CallOptions]
    * fails on the client with a DEADLINE_EXCEEDED and is cancelled on the server.
    */
-  @Test // result is good, race condition?
+  @Test
   fun unaryServerDoesNotRespondGrpcTimeout(): Unit = runBlocking {
     val serverCancelled = UnsafePromise<Unit>()
 
@@ -141,7 +141,7 @@ class ClientCallsTest : AbstractCallsTest() {
   }
 
   /** Verify that a server that sends zero responses to a unary RPC causes an exception. */
-  @Test // result is good, race condition?
+  @Test
   fun unaryNoResponses() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun sayHello(request: HelloRequest, responseObserver: StreamObserver<HelloReply>) {
@@ -195,7 +195,7 @@ class ClientCallsTest : AbstractCallsTest() {
     serverCancelled.join()
   }
 
-  @Test // result is good, race condition?
+  @Test
   fun unaryServerExceptionPropagated() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun sayHello(request: HelloRequest, responseObserver: StreamObserver<HelloReply>) {
@@ -407,7 +407,7 @@ class ClientCallsTest : AbstractCallsTest() {
     //requests.enqueue1(helloRequest("John"))
   }
 
-  @Test // no output?
+  @Test
   fun clientStreamingRpcCancelled() = runBlocking {
     val serverImpl = object : GreeterGrpc.GreeterImplBase() {
       override fun clientStreamSayHello(

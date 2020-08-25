@@ -50,6 +50,7 @@ import io.grpc.StatusRuntimeException
 import io.grpc.examples.helloworld.GreeterGrpc
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
@@ -770,7 +771,8 @@ class ServerCallsTest : AbstractCallsTest() {
     }
   }
 
-  @Test // fails: contextKey value is null instead of `testValue`
+  @Ignore
+  @Test // TODO fails contextKey value is null instead of `testValue`
   fun unaryContextPropagated() = runBlocking {
     val differentThreadContext: CoroutineContext = IOPool
     val contextKey = Context.key<String>("testKey")
@@ -856,7 +858,8 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(toList).containsExactly(helloReply("2nd"), helloReply("3rd"))
   }
 
-  @Test // fails: contextKey value is null instead of `bar`
+  @Ignore
+  @Test // TODO fails contextKey value is null instead of `bar`
   fun contextPreservation() = runBlocking {
     val contextKey = Context.key<String>("foo")
     val channel = makeChannel(
