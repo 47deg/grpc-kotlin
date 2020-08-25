@@ -27,6 +27,8 @@ import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.drain
 import arrow.fx.coroutines.stream.firstOrNull
 import arrow.fx.coroutines.stream.flatMap
+import arrow.fx.coroutines.stream.map
+import arrow.fx.coroutines.stream.repeat
 import arrow.fx.coroutines.stream.stream
 import arrow.fx.coroutines.stream.unconsOrNull
 import io.grpc.Status
@@ -52,45 +54,32 @@ import io.grpc.StatusException
 //  join()
 //}
 
+
 /**
  * Returns this flow, save that if there is not exactly one element, it throws a [StatusException].
  *
  * The purpose of this function is to enable the one element to get processed before we have
  * confirmation that the input flow is done.
  */
-internal fun <O> Stream<O>.singleOrStatusStream(expected: String, descriptor: Any): Stream<O> {
-  fun go(prev: O?, pull: Pull<O, Unit>, count: Int): Pull<Nothing, O> =
-    pull.unconsOrNull().flatMap { uncons ->
-      println("uncons=$uncons, uncons.tail=${uncons?.tail}, count=$count")
+fun <O> Stream<O>.singleOrStatusStream(expected: String, descriptor: Any): Stream<O> {
+  var count = 0
+
+  return asPull().repeat { p ->
+    p.unconsOrNull().flatMap { uncons ->
       when (uncons) {
-        null -> when {
-          (count == 1) -> {
-            println("prev=$prev, count=$count")
-            Pull.just(prev) as Pull<Nothing, O>
-          }
-          else -> {
-            println("Pull.raiseError.StatusException1")
-            Pull.raiseError(StatusException(
-              Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received none")
-            ))
-          }
-        }
-        else -> when {
-          uncons.head.size() > 1 || count > 0 -> {
-            println("Pull.raiseError.StatusException2")
-            Pull.raiseError(StatusException(
-              Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received two")
-            ))
-          }
-          else -> {
-            println("uncons.head[0]=${uncons.head[0]}, uncons.tail=${uncons.tail}, count=$count")
-            go(uncons.head[0], uncons.tail, count + 1)
-          }
+        null -> if (count == 0) Pull.raiseError(StatusException(
+          Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received none")
+        )) else Pull.just(null)
+
+        else -> if (uncons.head.size() > 1 || count > 0) Pull.raiseError(StatusException(
+          Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received two")
+        )) else {
+          count++
+          Pull.output1(uncons.head[0]).map { uncons.tail }
         }
       }
     }
-
-  return go(null, asPull(), 0).flatMap(Pull.Companion::output1).stream()
+  }.stream()
 }
 
 /**
