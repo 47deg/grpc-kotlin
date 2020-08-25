@@ -104,7 +104,6 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(cancelled.get()).isEqualTo(ExitCase.Cancelled)
   }
 
-  // Failing due to it was closed before calling: clientCall.halfClose()
   @Test
   fun unaryRequestHandledWithoutWaitingForHalfClose() = runBlocking {
     val processingStarted = Promise<Unit>()
@@ -366,7 +365,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(status.code).isEqualTo(Status.Code.OUT_OF_RANGE)
   }
 
-  @Test // fails waiting
+  @Test
   fun serverStreamingHandledWithoutWaitingForHalfClose() = runBlocking {
     val processingStarted = UnsafePromise<Unit>()
     val processingFinished = UnsafePromise<Unit>()
@@ -375,12 +374,12 @@ class ServerCallsTest : AbstractCallsTest() {
       ServerCalls.serverStreamingServerMethodDefinition(context, serverStreamingSayHelloMethod) { request ->
         processingStarted.complete(Result.success(Unit))
         Stream.iterable(request.nameList)
-          .map { helloReply("Hello, $request") }
+          .map { helloReply("Hello, $it") }
       }
     )
 
     val clientCall = channel.newCall(serverStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val responseChannel = Queue.bounded<HelloReply>(1)
+    val responseChannel = Queue.synchronous<HelloReply>()
 
     clientCall.start(object : ClientCall.Listener<HelloReply>() {
       override fun onMessage(message: HelloReply) {
@@ -511,10 +510,7 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     )
 
-    // first request is never consumed with Queue.bounded<HelloRequest>(0)
-    // val requestChannel = Queue.bounded<HelloRequest>(0)
-    // val requestChannel = Queue.bounded<HelloRequest>(1)
-    val requestChannel = Queue.unbounded<HelloRequest>()
+    val requestChannel = Queue.synchronous<HelloRequest>()
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel,
@@ -822,9 +818,9 @@ class ServerCallsTest : AbstractCallsTest() {
         serverStreamingSayHelloMethod
       ) {
         Stream.effect {
-          Pair(Queue.unbounded<Option<HelloReply>>(), UnsafePromise<Unit>())
+          Pair(Queue.synchronous<Option<HelloReply>>(), UnsafePromise<Unit>())
         }.flatMap { (queue, thirdSend) ->
-          queue.dequeue().buffer(1).terminateOnNone()
+          queue.dequeue().terminateOnNone()
             .concurrently(Stream.effect {
               queue.enqueue1(Some(helloReply("1st")))
               queue.enqueue1(Some(helloReply("2nd")))

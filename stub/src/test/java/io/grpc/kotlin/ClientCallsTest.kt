@@ -389,8 +389,7 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-//    val requests = Queue.bounded<HelloRequest>(0)
-    val requests = Queue.bounded<HelloRequest>(1)
+    val requests = Queue.synchronous<HelloRequest>()
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel = channel,
@@ -435,9 +434,7 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-//    val requests = Queue.bounded<HelloRequest>(0)
-//    val requests = Queue.bounded<HelloRequest>(1)
-    val requests = Queue.unbounded<HelloRequest>()
+    val requests = Queue.synchronous<HelloRequest>()
     val response = ForkConnected {
       ClientCalls.clientStreamingRpc(
         channel = channel,
@@ -478,7 +475,7 @@ class ClientCallsTest : AbstractCallsTest() {
     channel = makeChannel(serverImpl)
 
 //    val requests = Queue.bounded<Option<HelloRequest>>(0)
-    val requests = Queue.unbounded<Option<HelloRequest>>()
+    val requests = Queue.synchronous<Option<HelloRequest>>()
     val rpc: Queue<HelloReply> = ClientCalls.bidiStreamingRpc(
       channel = channel,
       method = bidiStreamingSayHelloMethod,

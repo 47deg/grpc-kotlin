@@ -267,8 +267,8 @@ class GeneratedCodeTest : AbstractCallsTest() {
       }
     })
 
-    val requests = Queue.unsafeUnbounded<Option<HelloRequest>>()
-    val responses = GreeterArrowCoroutineStub(channel).bidiStreamSayHello(
+    val requests = Queue.synchronous<Option<HelloRequest>>()
+    val responses: Queue<HelloReply> = GreeterArrowCoroutineStub(channel).bidiStreamSayHello(
       requests
         .dequeue()
         .terminateOnNone()
@@ -293,7 +293,7 @@ class GeneratedCodeTest : AbstractCallsTest() {
     })
 
     val stub = GreeterArrowCoroutineStub(channel)
-    val requests = Queue.unsafeUnbounded<Option<HelloRequest>>()
+    val requests = Queue.synchronous<Option<HelloRequest>>()
     val responses = stub.bidiStreamSayHello(requests.dequeue().terminateOnNone()).produceIn()
     requests.enqueue1(Some(helloRequest("Peridot")))
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Peridot"))

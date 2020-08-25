@@ -128,7 +128,7 @@ class HelpersTest : AbstractCallsTest() {
 
   @Test
   fun `test scenario`() = runBlocking {
-    val q = Queue.bounded<Option<Int>>(1)
+    val q = Queue.synchronous<Option<Int>>()
 
     ForkConnected {
       sleep(100.milliseconds)
