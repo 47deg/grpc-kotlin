@@ -131,7 +131,7 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     }, Metadata())
 
-    clientCall.sendMessage(helloRequest(""))
+    clientCall.sendMessage(helloRequest("simon"))
     clientCall.request(1)
     processingStarted.get()
     val responseResult = response.join()
@@ -380,7 +380,7 @@ class ServerCallsTest : AbstractCallsTest() {
     )
 
     val clientCall = channel.newCall(serverStreamingSayHelloMethod, CallOptions.DEFAULT)
-    val responseChannel = Queue.unbounded<HelloReply>()
+    val responseChannel = Queue.bounded<HelloReply>(1)
 
     clientCall.start(object : ClientCall.Listener<HelloReply>() {
       override fun onMessage(message: HelloReply) {
@@ -812,7 +812,7 @@ class ServerCallsTest : AbstractCallsTest() {
     assertThat(stub.sayHello(helloRequest("Peridot"))).isEqualTo(helloReply("Hello, Peridot"))
   }
 
-  @Test // bad translation from channelFlow
+  @Test
   fun serverStreamingFlowControl() = runBlocking {
     val receiveFirstMessage = Promise<Unit>()
     val receivedFirstMessage = Promise<Unit>()

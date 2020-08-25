@@ -59,20 +59,33 @@ import io.grpc.StatusException
  * confirmation that the input flow is done.
  */
 internal fun <O> Stream<O>.singleOrStatusStream(expected: String, descriptor: Any): Stream<O> {
-  fun go(prev: O?, s: Pull<O, Unit>, count: Int): Pull<Nothing, O> =
-    s.unconsOrNull().flatMap { uncons ->
+  fun go(prev: O?, pull: Pull<O, Unit>, count: Int): Pull<Nothing, O> =
+    pull.unconsOrNull().flatMap { uncons ->
+      println("uncons=$uncons, uncons.tail=${uncons?.tail}, count=$count")
       when (uncons) {
         null -> when {
-          (count == 1) -> Pull.just(prev) as Pull<Nothing, O>
-          else -> Pull.raiseError(StatusException(
-            Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received none")
-          ))
+          (count == 1) -> {
+            println("prev=$prev, count=$count")
+            Pull.just(prev) as Pull<Nothing, O>
+          }
+          else -> {
+            println("Pull.raiseError.StatusException1")
+            Pull.raiseError(StatusException(
+              Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received none")
+            ))
+          }
         }
         else -> when {
-          uncons.head.size() > 1 || count > 0 -> Pull.raiseError(StatusException(
-            Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received two")
-          ))
-          else -> go(uncons.head[0], uncons.tail, 1)
+          uncons.head.size() > 1 || count > 0 -> {
+            println("Pull.raiseError.StatusException2")
+            Pull.raiseError(StatusException(
+              Status.INTERNAL.withDescription("Expected one $expected for $descriptor but received two")
+            ))
+          }
+          else -> {
+            println("uncons.head[0]=${uncons.head[0]}, uncons.tail=${uncons.tail}, count=$count")
+            go(uncons.head[0], uncons.tail, count + 1)
+          }
         }
       }
     }

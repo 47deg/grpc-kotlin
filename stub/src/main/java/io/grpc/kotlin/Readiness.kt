@@ -24,8 +24,7 @@ import arrow.fx.coroutines.stream.concurrent.Queue
 internal class Readiness (
   private val isReallyReady: () -> Boolean
 ) {
-  // A CONFLATED channel never suspends to send, and two notifications of readiness are equivalent
-  // to one
+  // A CONFLATED channel never suspends to send, and two notifications of readiness are equivalent to one
   private val channel = Queue.unsafeSliding<Unit>(1)
 
   fun onReady() {

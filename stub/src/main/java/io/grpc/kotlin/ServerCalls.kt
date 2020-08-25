@@ -21,6 +21,7 @@ import arrow.core.Option
 import arrow.core.Some
 import arrow.fx.coroutines.Environment
 import arrow.fx.coroutines.ExitCase
+import arrow.fx.coroutines.Semaphore
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.drain
@@ -36,8 +37,6 @@ import io.grpc.ServerCallHandler
 import io.grpc.ServerMethodDefinition
 import io.grpc.Status
 import io.grpc.StatusException
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.CancellationException
 import kotlin.coroutines.CoroutineContext
 import io.grpc.Metadata as GrpcMetadata
@@ -76,7 +75,11 @@ object ServerCalls {
     return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
       requests
         .singleOrStatusStream("request", descriptor)
-        .effectMap(implementation)
+        .flatMap { request ->
+          Stream.effect {
+            implementation(request)
+          }
+        }
     }
   }
 
@@ -230,16 +233,19 @@ object ServerCalls {
 
     // Runs async cancellable on the provided context, always returns a new cancellable scope.
     val rpcCancelToken = Environment(context).unsafeRunAsyncCancellable {
-      val mutex = Mutex()
-      Stream.effect { implementation(requests) }.flatten()
-        .effectMap { response: ResponseT ->
-          println("ServerCalls.Server.effectMap.suspendUntilReady")
-          readiness.suspendUntilReady()
-          println("ServerCalls.Server.effectMap.sendMessage: $response")
-          mutex.withLock { call.sendMessage(response) }
-        }.onFinalizeCase { case ->
+      val semaphore = Semaphore(1)
+      Stream.effect {
+        implementation(requests)
+          .effectMap { response: ResponseT ->
+            println("ServerCalls.Server.effectMap.suspendUntilReady")
+            readiness.suspendUntilReady()
+            println("ServerCalls.Server.effectMap.sendMessage: $response")
+            semaphore.withPermit { call.sendMessage(response) }
+          }
+      }.flatten()
+        .onFinalizeCase { case ->
           println("ServerCalls.Server.onFinalizeCase: $case")
-          mutex.withLock {
+          semaphore.withPermit {
             when (case) {
               ExitCase.Completed -> call.close(Status.OK, GrpcMetadata())
               ExitCase.Cancelled -> call.close(Status.CANCELLED, GrpcMetadata())
