@@ -24,12 +24,18 @@ import arrow.fx.coroutines.ForkAndForget
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.milliseconds
 import arrow.fx.coroutines.sleep
+import arrow.fx.coroutines.stream.Chunk
+import arrow.fx.coroutines.stream.Pull
+import arrow.fx.coroutines.stream.PullUncons
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.drain
 import arrow.fx.coroutines.stream.filterOption
+import arrow.fx.coroutines.stream.flatMap
+import arrow.fx.coroutines.stream.stream
 import arrow.fx.coroutines.stream.terminateOnNone
 import arrow.fx.coroutines.stream.toList
+import arrow.fx.coroutines.stream.unconsN
 import com.google.common.truth.Truth.assertThat
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
@@ -111,40 +117,49 @@ class FlowControlTest : AbstractCallsTest() {
     // responses.cancel()
   }
 
+  private fun <O> Stream<O>.zipInPairs(): Stream<Pair<O, O>> {
+    fun go(last: Chunk<O>, s: Pull<O, Unit>): Pull<Pair<O, O>, Unit> =
+      s.unconsN(2).flatMap { uncons2: PullUncons<O>? ->
+        when (uncons2) {
+          null -> Pull.output1(Pair(last[0], last[1]))
+          else -> Pull.output(Chunk(Pair(last[0], last[1]))).flatMap {
+            go(uncons2.head, uncons2.tail)
+          }
+        }
+      }
+
+    return asPull().unconsN(2).flatMap { uncons2: PullUncons<O>? ->
+      when (uncons2) {
+        null -> Pull.done
+        else -> go(uncons2.head, uncons2.tail)
+      }
+    }.stream()
+  }
+
+  @Test
+  fun testZipInPairs() = runBlocking {
+    Stream(1, 2, 3, 4, 5, 6)
+      .zipInPairs()
+      .toList()
+      .let(::println)
+  }
+
+  @Test
+  fun testZipInPairs2() = runBlocking {
+    Stream(1, 2, 3, 4, 5, 6, 7)
+      .zipInPairs()
+      .toList()
+      .let(::println)
+  }
+
   @Test
   fun bidiPingPongFlowControlServerDrawsMultipleRequests() = runBlocking {
-
-//    fun <O> Stream<O>.zipInPairs(): Stream<Pair<O, O?>> {
-//      fun go(last: Chunk<O>, s: Pull<O, Unit>): Pull<Pair<O, O?>, Unit> =
-//        s.unconsOrNull().flatMap { uncons ->
-//          when (uncons) {
-//            null -> Pull.output1(Pair(last[0], last.lastOrNull()))
-//            else -> {
-//              val (newLast: Chunk<O>, out: Chunk<Pair<O, O>>) = uncons.head.mapAccumulate(last) { prev, next ->
-//                Pair(next, Pair(prev[0], prev[1]))
-//              }
-//              Pull.output(out).flatMap { go(newLast, uncons.tail) }
-//            }
-//          }
-//        }
-//
-//      return asPull().unconsN(2).flatMap { uncons2 ->
-//        when (uncons2) {
-//          null -> Pull.done
-//          else -> go(uncons2.head, uncons2.tail)
-//        }
-//      }.stream()
-//    }
-
     val channel = makeChannel(
       ServerCalls.bidiStreamingServerMethodDefinition(
         context = context,
         descriptor = bidiStreamingSayHelloMethod,
-        implementation = { requests: Stream<HelloRequest> ->
-          // how to pair streams in Pairs of 2, .chunkN(2)?
-          requests.zipWithNext().map { (a, b) ->
-            helloReply("Hello, ${a.name} and ${b?.name}")
-          }
+        implementation = { requests ->
+          requests.zipInPairs().map { (a, b) -> helloReply("Hello, ${a.name} and ${b.name}") }
         }
       )
     )
