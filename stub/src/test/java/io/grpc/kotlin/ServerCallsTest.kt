@@ -19,7 +19,9 @@ package io.grpc.kotlin
 import arrow.core.None
 import arrow.core.Option
 import arrow.core.Some
+import arrow.core.getOrElse
 import arrow.fx.coroutines.ExitCase
+import arrow.fx.coroutines.ForkAndForget
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.IOPool
 import arrow.fx.coroutines.Promise
@@ -819,20 +821,29 @@ class ServerCallsTest : AbstractCallsTest() {
         serverStreamingSayHelloMethod
       ) {
         Stream.effect {
-          Pair(Queue.synchronous<Option<HelloReply>>(), UnsafePromise<Unit>())
+          Pair(Queue.synchronous<Option<HelloReply>>(), Promise<Unit>())
         }.flatMap { (queue, thirdSend) ->
           queue.dequeue().terminateOnNone()
             .concurrently(Stream.effect {
+              println("enqueue 1st")
               queue.enqueue1(Some(helloReply("1st")))
+              println("enqueue 2nd")
               queue.enqueue1(Some(helloReply("2nd")))
-              val thirdSendFiber = ForkConnected {
+              val thirdSendFiber = ForkAndForget {
+                println("queue.enqueue1(Some(helloReply(3rd))), this should block until dequeue1")
                 queue.enqueue1(Some(helloReply("3rd")))
-                thirdSend.complete(Result.success(Unit))
+                println("3rd sent")
+                thirdSend.complete(Unit)
                 queue.enqueue1(None)
               }
+              println("lets sleep some 200.milliseconds")
               sleep(200.milliseconds)
-              assertThat(thirdSend.tryGet()).isNull()
+              val tryGet= thirdSend.tryGet()
+              println("3rd should not be completed yet.. status=${if (tryGet==null) "Not Completed" else "Completed"}")
+              assertThat(tryGet).isNull()
+              println("opening barrier")
               receiveFirstMessage.complete(Unit)
+              println("closing another barrier")
               receivedFirstMessage.get()
               thirdSendFiber.join()
             })
@@ -848,12 +859,15 @@ class ServerCallsTest : AbstractCallsTest() {
       ).effectMap { enqueue1(Some(it)) }
         .drain()
     }
+    println("barrier closed until receiveFirstMessage is completed")
     receiveFirstMessage.get()
+    println("barrier opened lets dequeue1")
     val helloReply1st = responses.dequeue1()
-    println("helloReply1st: $helloReply1st")
-    assertThat(helloReply1st).isEqualTo(helloReply("1st"))
+    println("responses.dequeue1(): $helloReply1st")
+    assertThat(helloReply1st.getOrElse { null }).isEqualTo(helloReply("1st"))
+    println("opening back the other barrier")
     receivedFirstMessage.complete(Unit)
-    val toList = responses.dequeue().toList()
+    val toList = responses.dequeue().terminateOnNone().toList()
     println("responses.dequeue() = $toList")
     assertThat(toList).containsExactly(helloReply("2nd"), helloReply("3rd"))
   }

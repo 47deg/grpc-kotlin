@@ -35,27 +35,6 @@ import io.grpc.Status
 import io.grpc.StatusException
 
 /**
- * Extracts the value of a [Deferred] known to be completed, or throws its exception if it was
- * not completed successfully.  (Non-experimental variant of `getDone`.)
- */
-//internal val <T> Deferred<T>.doneValue: T
-//  get() {
-//    check(isCompleted) { "doneValue should only be called on completed Deferred values" }
-//    return runBlocking(Dispatchers.Unconfined) {
-//      await()
-//    }
-//  }
-
-/**
- * Cancels a [Job] with a cause and suspends until the job completes/is finished cancelling.
- */
-//internal suspend fun Job.cancelAndJoin(message: String, cause: Exception? = null) {
-//  cancel(message, cause)
-//  join()
-//}
-
-
-/**
  * Returns this flow, save that if there is not exactly one element, it throws a [StatusException].
  *
  * The purpose of this function is to enable the one element to get processed before we have
@@ -95,9 +74,6 @@ internal suspend fun <T> Stream<T>.singleOrStatus(
 suspend fun <T> Stream<T>.produceIn(): Queue<T> {
   val queue = Queue.unbounded<T>()
   ForkConnected {
-//    effectMap {
-//      queue.enqueue1(it)
-//    }.drain()
     fold(Unit) { _, item: T ->
       queue.tryOffer1(item)
     }.drain()
