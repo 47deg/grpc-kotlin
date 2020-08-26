@@ -16,6 +16,8 @@
 
 package io.grpc.kotlin
 
+import arrow.core.None
+import arrow.core.Option
 import arrow.fx.coroutines.ForkAndForget
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.stream.Pull
@@ -104,10 +106,11 @@ suspend fun <T> Stream<T>.produceIn(): Queue<T> {
 }
 
 // RENDEZVOUS
-suspend fun <E> produce(block: suspend Enqueue<E>.() -> Unit): Queue<E> {
-  val queue = Queue.synchronous<E>()
+suspend fun <E> produce(block: suspend Enqueue<Option<E>>.() -> Unit): Queue<Option<E>> {
+  val queue = Queue.synchronous<Option<E>>()
   ForkAndForget {
     queue.block()
+    queue.enqueue1(None)
   }
   return queue
 }

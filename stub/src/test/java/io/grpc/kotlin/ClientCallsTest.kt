@@ -474,7 +474,6 @@ class ClientCallsTest : AbstractCallsTest() {
 
     channel = makeChannel(serverImpl)
 
-//    val requests = Queue.bounded<Option<HelloRequest>>(0)
     val requests = Queue.synchronous<Option<HelloRequest>>()
     val rpc: Queue<HelloReply> = ClientCalls.bidiStreamingRpc(
       channel = channel,

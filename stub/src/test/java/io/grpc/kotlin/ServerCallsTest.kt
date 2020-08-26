@@ -840,12 +840,12 @@ class ServerCallsTest : AbstractCallsTest() {
       }
     )
 
-    val responses: Queue<HelloReply> = produce<HelloReply> {
+    val responses: Queue<Option<HelloReply>> = produce<HelloReply> {
       ClientCalls.serverStreamingRpc(
         channel,
         serverStreamingSayHelloMethod,
         multiHelloRequest("simon")
-      ).effectMap { enqueue1(it) }
+      ).effectMap { enqueue1(Some(it)) }
         .drain()
     }
     receiveFirstMessage.get()

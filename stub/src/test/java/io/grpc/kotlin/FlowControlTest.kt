@@ -19,30 +19,33 @@ package io.grpc.kotlin
 import arrow.core.None
 import arrow.core.Option
 import arrow.core.Some
+import arrow.core.getOrElse
+import arrow.fx.coroutines.ForkAndForget
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.milliseconds
 import arrow.fx.coroutines.sleep
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.drain
+import arrow.fx.coroutines.stream.filterOption
 import arrow.fx.coroutines.stream.terminateOnNone
 import arrow.fx.coroutines.stream.toList
 import com.google.common.truth.Truth.assertThat
 import io.grpc.examples.helloworld.HelloReply
 import io.grpc.examples.helloworld.HelloRequest
-import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
-import java.util.concurrent.CancellationException
 
 /** Tests for the flow control of the Kotlin gRPC APIs. */
-@Ignore
 @RunWith(JUnit4::class)
 class FlowControlTest : AbstractCallsTest() {
   val context = CoroutineName("server context")
 
-  private suspend fun <T> Stream<T>.produceUnbuffered(): Queue<T> =
-    produceIn()
+  private suspend fun <T> Stream<T>.produceUnbuffered(): Queue<Option<T>> =
+    produce {
+      effectMap { enqueue1(Some(it)) }.drain()
+    }
 
   @Test
   fun bidiPingPongFlowControl() = runBlocking {
@@ -50,27 +53,28 @@ class FlowControlTest : AbstractCallsTest() {
       ServerCalls.bidiStreamingServerMethodDefinition(
         context = context,
         descriptor = bidiStreamingSayHelloMethod,
-        implementation = { requests ->
-          requests.map { helloReply("Hello, ${it.name}") }
-        }
+        implementation = { requests -> requests.map { helloReply("Hello, ${it.name}") } }
       )
     )
     val latch = UnsafePromise<Unit>()
-    val requests = Queue.unsafeUnbounded<Option<HelloRequest>>()
-    val responses: Queue<HelloReply> =
+    val requests = Queue.synchronous<Option<HelloRequest>>()
+    val responses: Queue<Option<HelloReply>> =
       ClientCalls.bidiStreamingRpc(
         channel = channel,
-        requests = requests.dequeue().terminateOnNone()
-          .close { latch.tryGet() },
+        requests = requests.dequeue().terminateOnNone(),
         method = bidiStreamingSayHelloMethod
       ).produceUnbuffered()
     requests.enqueue1(Some(helloRequest("Garnet")))
     requests.enqueue1(Some(helloRequest("Amethyst")))
-    val third = ForkConnected { requests.enqueue1(Some(helloRequest("Steven"))) }
-    sleep(200.milliseconds)
-    assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet"))
+    val third = ForkConnected {
+      requests.enqueue1(Some(helloRequest("Steven")))
+      latch.complete(Result.success(Unit))
+    }
+    sleep(200.milliseconds)  // wait for everything to work its way through the system
+    assertThat(latch.tryGet()).isNull()
+    assertThat(responses.dequeue1().getOrElse { null }).isEqualTo(helloReply("Hello, Garnet"))
     third.join() // pulling one element allows the cycle to advance
-    latch.complete(Result.failure(CancellationException()))
+    requests.enqueue1(None)
     //responses.cancel()
   }
 
@@ -80,29 +84,57 @@ class FlowControlTest : AbstractCallsTest() {
       ServerCalls.bidiStreamingServerMethodDefinition(
         context = context,
         descriptor = bidiStreamingSayHelloMethod,
-        implementation = { requests ->
+        implementation = { requests: Stream<HelloRequest> ->
           // TODO: Channel.RENDEZVOUS ==? 0
-          requests.buffer(0).map { helloReply("Hello, ${it.name}") }
+          requests.buffer(1).map { helloReply("Hello, ${it.name}") }
         }
       )
     )
-    val requests = Queue.unsafeUnbounded<HelloRequest>()
+    val latch = UnsafePromise<Unit>()
+    val requests = Queue.synchronous<Option<HelloRequest>>()
     val responses = ClientCalls.bidiStreamingRpc(
       channel = channel,
-      requests = requests.dequeue(),
+      requests = requests.dequeue().terminateOnNone(),
       method = bidiStreamingSayHelloMethod
     ).produceUnbuffered()
-    requests.enqueue1(helloRequest("Garnet"))
-    requests.enqueue1(helloRequest("Amethyst"))
-    requests.enqueue1(helloRequest("Pearl"))
-    val fourth = ForkConnected { requests.enqueue1(helloRequest("Pearl")) }
+    requests.enqueue1(Some(helloRequest("Garnet")))
+    requests.enqueue1(Some(helloRequest("Amethyst")))
+    requests.enqueue1(Some(helloRequest("Pearl")))
+    val fourth = ForkAndForget {
+      requests.enqueue1(Some(helloRequest("Pearl")))
+      latch.complete(Result.success(Unit))
+    }
     sleep(200.milliseconds)
-    assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet"))
+    // assertThat(latch.tryGet()).isNull()
+    assertThat(responses.dequeue1().getOrElse { null }).isEqualTo(helloReply("Hello, Garnet"))
     fourth.join() // pulling one element allows the cycle to advance
+    // responses.cancel()
   }
 
   @Test
   fun bidiPingPongFlowControlServerDrawsMultipleRequests() = runBlocking {
+
+//    fun <O> Stream<O>.zipInPairs(): Stream<Pair<O, O?>> {
+//      fun go(last: Chunk<O>, s: Pull<O, Unit>): Pull<Pair<O, O?>, Unit> =
+//        s.unconsOrNull().flatMap { uncons ->
+//          when (uncons) {
+//            null -> Pull.output1(Pair(last[0], last.lastOrNull()))
+//            else -> {
+//              val (newLast: Chunk<O>, out: Chunk<Pair<O, O>>) = uncons.head.mapAccumulate(last) { prev, next ->
+//                Pair(next, Pair(prev[0], prev[1]))
+//              }
+//              Pull.output(out).flatMap { go(newLast, uncons.tail) }
+//            }
+//          }
+//        }
+//
+//      return asPull().unconsN(2).flatMap { uncons2 ->
+//        when (uncons2) {
+//          null -> Pull.done
+//          else -> go(uncons2.head, uncons2.tail)
+//        }
+//      }.stream()
+//    }
 
     val channel = makeChannel(
       ServerCalls.bidiStreamingServerMethodDefinition(
@@ -110,11 +142,14 @@ class FlowControlTest : AbstractCallsTest() {
         descriptor = bidiStreamingSayHelloMethod,
         implementation = { requests: Stream<HelloRequest> ->
           // how to pair streams in Pairs of 2, .chunkN(2)?
-          requests.zipWithNext().map { (a, b) -> helloReply("Hello, ${a.name} and ${b?.name}") }
+          requests.zipWithNext().map { (a, b) ->
+            helloReply("Hello, ${a.name} and ${b?.name}")
+          }
         }
       )
     )
-    val requests = Queue.unsafeUnbounded<Option<HelloRequest>>()
+    val latch = UnsafePromise<Unit>()
+    val requests = Queue.synchronous<Option<HelloRequest>>()
     val responses = ClientCalls.bidiStreamingRpc(
       channel = channel,
       requests = requests.dequeue().terminateOnNone(),
@@ -124,14 +159,17 @@ class FlowControlTest : AbstractCallsTest() {
     requests.enqueue1(Some(helloRequest("Amethyst")))
     requests.enqueue1(Some(helloRequest("Pearl")))
     requests.enqueue1(Some(helloRequest("Steven")))
-    val fourth = ForkConnected { requests.enqueue1(Some(helloRequest("Onion"))) }
-    sleep(300.milliseconds)
-    //assertThat(fourth.isCompleted).isFalse()
-    assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet and Amethyst"))
+    val fourth = ForkAndForget {
+      requests.enqueue1(Some(helloRequest("Onion")))
+      latch.complete(Result.success(Unit))
+    }
+    sleep(300.milliseconds) // wait for everything to work its way through the system
+    // assertThat(latch.tryGet()).isNull()
+    assertThat(responses.dequeue1().getOrElse { null }).isEqualTo(helloReply("Hello, Garnet and Amethyst"))
     fourth.join() // pulling one element allows the cycle to advance
     requests.enqueue1(Some(helloRequest("Rainbow 2.0")))
-    requests.tryOffer1(None)
-    val helloReplyList = responses.dequeue().toList()
+    requests.enqueue1(None)
+    val helloReplyList = responses.dequeue().filterOption().toList()
     assertThat(
       helloReplyList
     ).containsExactly(
@@ -155,26 +193,24 @@ class FlowControlTest : AbstractCallsTest() {
         }
       )
     )
-    val requests = Queue.unsafeUnbounded<Option<HelloRequest>>()
-
     val latch = UnsafePromise<Unit>()
-
+    val requests = Queue.synchronous<Option<HelloRequest>>()
     val responses = ClientCalls.bidiStreamingRpc(
       channel = channel,
-      requests = requests
-        .dequeue()
-        .terminateOnNone()
-        .close { latch.tryGet() },
+      requests = requests.dequeue().terminateOnNone(),
       method = bidiStreamingSayHelloMethod
     ).produceUnbuffered()
     requests.enqueue1(Some(helloRequest("Garnet")))
-    val second = ForkConnected { requests.enqueue1(Some(helloRequest("Pearl"))) }
-    sleep(200.milliseconds)
-    //assertThat(second.isCompleted).isFalse()
-    assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet"))
+    val second = ForkConnected {
+      requests.enqueue1(Some(helloRequest("Pearl")))
+      latch.complete(Result.success(Unit))
+    }
+    sleep(200.milliseconds) // wait for everything to work its way through the system
+    // assertThat(latch.tryGet()).isNull()
+    assertThat(responses.dequeue1().getOrElse { null }).isEqualTo(helloReply("Hello, Garnet"))
     second.join()
-    assertThat(responses.dequeue1()).isEqualTo(helloReply("Goodbye, Garnet"))
-    latch.complete(Result.failure(CancellationException()))
+    assertThat(responses.dequeue1().getOrElse { null }).isEqualTo(helloReply("Goodbye, Garnet"))
+    requests.enqueue1(None)
     //responses.cancel()
   }
 }
