@@ -206,7 +206,10 @@ object ServerCalls {
   ): ServerCall.Listener<RequestT> {
     call.sendHeaders(GrpcMetadata())
 
-    val readiness = Readiness { call.isReady }
+    val readiness = Readiness {
+      println("Readiness call.isReady? ${call.isReady}")
+      call.isReady
+    }
     val requestsChannel = Queue.unsafeBounded<Option<RequestT>>(1)
 
     // We complete this latch when processing requests fails, or when we halfClose.

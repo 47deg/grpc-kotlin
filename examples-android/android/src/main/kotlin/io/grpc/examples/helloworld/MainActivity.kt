@@ -37,7 +37,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // lazy otherwise resources is null
-    private val greeter by lazy { GreeterGrpcKt.GreeterArrowCoroutineStub(channel()) }
+    private val greeter by lazy { GreeterGrpcKt.GreeterCoroutineStub(channel()) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

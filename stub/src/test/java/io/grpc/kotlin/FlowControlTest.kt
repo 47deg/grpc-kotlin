@@ -111,7 +111,7 @@ class FlowControlTest : AbstractCallsTest() {
       latch.complete(Result.success(Unit))
     }
     sleep(200.milliseconds)
-    // assertThat(latch.tryGet()).isNull()
+    assertThat(latch.tryGet()).isNull()
     assertThat(responses.dequeue1().getOrElse { null }).isEqualTo(helloReply("Hello, Garnet"))
     fourth.join() // pulling one element allows the cycle to advance
     // responses.cancel()
@@ -179,7 +179,7 @@ class FlowControlTest : AbstractCallsTest() {
       latch.complete(Result.success(Unit))
     }
     sleep(300.milliseconds) // wait for everything to work its way through the system
-    // assertThat(latch.tryGet()).isNull()
+    assertThat(latch.tryGet()).isNull()
     assertThat(responses.dequeue1().getOrElse { null }).isEqualTo(helloReply("Hello, Garnet and Amethyst"))
     fourth.join() // pulling one element allows the cycle to advance
     requests.enqueue1(Some(helloRequest("Rainbow 2.0")))
@@ -221,7 +221,7 @@ class FlowControlTest : AbstractCallsTest() {
       latch.complete(Result.success(Unit))
     }
     sleep(200.milliseconds) // wait for everything to work its way through the system
-    // assertThat(latch.tryGet()).isNull()
+    assertThat(latch.tryGet()).isNull()
     assertThat(responses.dequeue1().getOrElse { null }).isEqualTo(helloReply("Hello, Garnet"))
     second.join()
     assertThat(responses.dequeue1().getOrElse { null }).isEqualTo(helloReply("Goodbye, Garnet"))

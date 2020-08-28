@@ -28,6 +28,7 @@ import arrow.fx.coroutines.never
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.drain
+import arrow.fx.coroutines.stream.noneTerminate
 import arrow.fx.coroutines.stream.terminateOnNone
 import arrow.fx.coroutines.stream.toList
 import com.google.common.truth.Truth.assertThat
@@ -268,11 +269,11 @@ class GeneratedCodeTest : AbstractCallsTest() {
     })
 
     val requests = Queue.synchronous<Option<HelloRequest>>()
-    val responses: Queue<HelloReply> = GreeterArrowCoroutineStub(channel).bidiStreamSayHello(
+    val responses: Queue<Option<HelloReply>> = GreeterArrowCoroutineStub(channel).bidiStreamSayHello(
       requests
         .dequeue()
         .terminateOnNone()
-    ).produceIn()
+    ).noneTerminate().produceIn()
 
     requests.enqueue1(Some(helloRequest("Steven")))
     assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Steven"))
@@ -288,6 +289,8 @@ class GeneratedCodeTest : AbstractCallsTest() {
   fun bidiStreamingRpcReturnsEarly() = runBlocking {
     val channel = makeChannel(object : GreeterCoroutineImplBase() {
       override fun bidiStreamSayHello(requests: Stream<HelloRequest>): Stream<HelloReply> {
+        // In kotlinx.coroutines take(2) throws AbortFlowException when done and cancels
+        // meaning requestsChannel gets closed
         return requests.take(2).map { helloReply("Hello, ${it.name}") }
       }
     })

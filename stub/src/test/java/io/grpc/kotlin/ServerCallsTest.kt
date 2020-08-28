@@ -503,9 +503,9 @@ class ServerCallsTest : AbstractCallsTest() {
       ) { requests ->
         // In kotlinx.coroutines take(2) throws AbortFlowException when done and cancels
         // meaning requestsChannel gets closed
-        val (req1, req2) = requests.take(2).toList()
-//        requests.append { Stream.raiseError<Throwable>(Exception("AbortFlowException")) }
-//          .drain()
+        val (req1, req2) = requests.take(2)
+//          .effectTap { Stream.raiseError<Throwable>(CancellationException("AbortFlowException")) }
+          .toList()
         barrier.get()
         helloReply("Hello, ${req1.name} and ${req2.name}")
       }
@@ -823,7 +823,7 @@ class ServerCallsTest : AbstractCallsTest() {
         Stream.effect {
           Pair(Queue.synchronous<Option<HelloReply>>(), Promise<Unit>())
         }.flatMap { (queue, thirdSend) ->
-          queue.dequeue().terminateOnNone()
+          queue.dequeue().buffer(1).terminateOnNone()
             .concurrently(Stream.effect {
               println("enqueue 1st")
               queue.enqueue1(Some(helloReply("1st")))
@@ -838,8 +838,8 @@ class ServerCallsTest : AbstractCallsTest() {
               }
               println("lets sleep some 200.milliseconds")
               sleep(200.milliseconds)
-              val tryGet= thirdSend.tryGet()
-              println("3rd should not be completed yet.. status=${if (tryGet==null) "Not Completed" else "Completed"}")
+              val tryGet = thirdSend.tryGet()
+              println("3rd should not be completed yet.. status=${if (tryGet == null) "Not Completed" else "Completed"}")
               assertThat(tryGet).isNull()
               println("opening barrier")
               receiveFirstMessage.complete(Unit)
@@ -856,8 +856,10 @@ class ServerCallsTest : AbstractCallsTest() {
         channel,
         serverStreamingSayHelloMethod,
         multiHelloRequest("simon")
-      ).effectMap { enqueue1(Some(it)) }
-        .drain()
+      ).effectMap {
+        println("responses.enqueue1 = $it")
+        enqueue1(Some(it))
+      }.drain()
     }
     println("barrier closed until receiveFirstMessage is completed")
     receiveFirstMessage.get()

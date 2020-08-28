@@ -22,6 +22,7 @@ import arrow.fx.coroutines.sleep
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.drain
+import arrow.fx.coroutines.stream.firstOrError
 import arrow.fx.coroutines.stream.handleErrorWith
 import arrow.fx.coroutines.stream.lastOrError
 import arrow.fx.coroutines.stream.toList
@@ -90,7 +91,7 @@ import org.junit.rules.Timeout
 import java.io.IOException
 import java.io.InputStream
 import java.net.SocketAddress
-import java.util.*
+import java.util.Arrays
 import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
@@ -895,11 +896,11 @@ abstract class AbstractInteropTest {
             )
             .build()
         )
-        .first { true }
+        .firstOrError()
     }
   }
 
-  @Test
+  @Test // debugging works
   fun deadlineExceeded() {
     runBlocking {
       // warm up the channel and JVM
@@ -911,7 +912,7 @@ abstract class AbstractInteropTest {
         )
         .build()
       try {
-        stub.withDeadlineAfter(100, TimeUnit.MILLISECONDS).streamingOutputCall(request).first { true }
+        stub.withDeadlineAfter(100, TimeUnit.MILLISECONDS).streamingOutputCall(request).firstOrError()
         fail("Expected deadline to be exceeded")
       } catch (ex: StatusException) {
         assertEquals(Status.DEADLINE_EXCEEDED.code, ex.status.code)
@@ -1176,7 +1177,7 @@ abstract class AbstractInteropTest {
     }
   }
 
-  @Test
+  @Test // fails because ClientCall.Listener.onClose not called
   fun specialStatusMessage() {
     val errorCode = 2
     val errorMessage = "\t\ntest with whitespace\r\nand Unicode BMP ☺ and non-BMP 😈\t\n"
@@ -1201,7 +1202,7 @@ abstract class AbstractInteropTest {
   }
 
   /** Sends an rpc to an unimplemented method within TestService.  */
-  @Test
+  @Test // fails because ClientCall.Listener.onClose not called
   fun unimplementedMethod() {
     runBlocking {
       val ex = assertFailsWith<StatusException> {
