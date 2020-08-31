@@ -207,7 +207,7 @@ object ServerCalls {
     call.sendHeaders(GrpcMetadata())
 
     val readiness = Readiness {
-      println("Readiness call.isReady? ${call.isReady}")
+      println("ServerCalls Readiness call.isReady? ${call.isReady}")
       call.isReady
     }
     val requestsChannel = Queue.unsafeBounded<Option<RequestT>>(1)

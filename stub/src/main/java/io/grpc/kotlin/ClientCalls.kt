@@ -277,7 +277,10 @@ object ClientCalls {
      * there is room in the buffer.
      */
     val responses = Queue.unsafeBounded<Option<ResponseT>>(1)
-    val readiness = Readiness { clientCall.isReady }
+    val readiness = Readiness {
+      println("ClientCalls Readiness call.isReady? ${clientCall.isReady}")
+      clientCall.isReady
+    }
 
     val latch = UnsafePromise<Unit>()
 
@@ -313,6 +316,7 @@ object ClientCalls {
     }.flatMap {
       responses
         .dequeue()
+        .buffer(1)
         .terminateOnNone()
         .effectTap {
           println("ClientCalls.responses.dequeue.effectTap: clientCall.request(1)")

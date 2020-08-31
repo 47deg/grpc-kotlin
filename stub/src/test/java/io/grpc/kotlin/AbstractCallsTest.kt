@@ -16,8 +16,13 @@
 
 package io.grpc.kotlin
 
+import arrow.core.None
+import arrow.core.Option
 import arrow.fx.coroutines.Environment
+import arrow.fx.coroutines.ForkAndForget
 import arrow.fx.coroutines.IOPool
+import arrow.fx.coroutines.stream.concurrent.Enqueue
+import arrow.fx.coroutines.stream.concurrent.Queue
 import com.google.common.util.concurrent.MoreExecutors
 import io.grpc.BindableService
 import io.grpc.Context
@@ -62,6 +67,16 @@ abstract class AbstractCallsTest {
     val bidiStreamingSayHelloMethod: MethodDescriptor<HelloRequest, HelloReply> =
       GreeterGrpc.getBidiStreamSayHelloMethod()
     val greeterService: ServiceDescriptor = GreeterGrpc.getServiceDescriptor()
+
+    suspend fun <E> produce(block: suspend Enqueue<Option<E>>.() -> Unit): Queue<Option<E>> {
+      // RENDEZVOUS
+      val queue = Queue.synchronous<Option<E>>()
+      ForkAndForget {
+        queue.block()
+        queue.enqueue1(None)
+      }
+      return queue
+    }
 
     fun whenContextIsCancelled(onCancelled: () -> Unit) {
       Context.current().withCancellation().addListener(

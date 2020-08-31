@@ -80,13 +80,3 @@ suspend fun <T> Stream<T>.produceIn(): Queue<T> {
   }
   return queue
 }
-
-// RENDEZVOUS
-suspend fun <E> produce(block: suspend Enqueue<Option<E>>.() -> Unit): Queue<Option<E>> {
-  val queue = Queue.synchronous<Option<E>>()
-  ForkAndForget {
-    queue.block()
-    queue.enqueue1(None)
-  }
-  return queue
-}

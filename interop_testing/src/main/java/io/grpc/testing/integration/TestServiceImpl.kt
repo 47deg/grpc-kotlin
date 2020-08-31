@@ -15,6 +15,8 @@
  */
 package io.grpc.testing.integration
 
+import arrow.fx.coroutines.milliseconds
+import arrow.fx.coroutines.sleep
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.lastOrError
 import com.google.protobuf.ByteString
@@ -24,7 +26,7 @@ import io.grpc.ServerCall
 import io.grpc.ServerCallHandler
 import io.grpc.ServerInterceptor
 import io.grpc.Status
-import java.util.*
+import java.util.Random
 import kotlin.math.min
 
 /**
@@ -64,19 +66,17 @@ class TestServiceImpl(
   ): Stream<Messages.StreamingOutputCallResponse> {
     var offset = 0
     return Stream.iterable(request.responseParametersList)
-      .flatMap { params: Messages.ResponseParameters ->
-        //sleep(params.intervalUs.milliseconds)
+      .effectMap { params: Messages.ResponseParameters ->
+        sleep(params.intervalUs.milliseconds)
         val offsetPayload = offset
         offset += params.size
         offset %= compressableBuffer.size()
-        Stream(
-          Messages.StreamingOutputCallResponse
-            .newBuilder()
-            .apply {
-              payload = generatePayload(compressableBuffer, offsetPayload, params.size)
-            }
-            .build()
-        )
+        Messages.StreamingOutputCallResponse
+          .newBuilder()
+          .apply {
+            payload = generatePayload(compressableBuffer, offsetPayload, params.size)
+          }
+          .build()
       }
   }
 
