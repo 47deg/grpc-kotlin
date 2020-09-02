@@ -192,7 +192,7 @@ class FlowControlTest : AbstractCallsTest() {
     )
   }
 
-  @Test
+  @Test // responses.cancel() wont throw Cancellation
   fun bidiPingPongFlowControlServerSendsMultipleResponses() = runBlocking {
     val channel = makeChannel(
       ServerCalls.bidiStreamingServerMethodDefinition(

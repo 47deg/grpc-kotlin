@@ -19,6 +19,7 @@ package io.grpc.kotlin
 import arrow.core.None
 import arrow.core.Option
 import arrow.core.Some
+import arrow.core.getOrElse
 import arrow.fx.coroutines.ExitCase
 import arrow.fx.coroutines.ForkConnected
 import arrow.fx.coroutines.IOPool
@@ -276,9 +277,9 @@ class GeneratedCodeTest : AbstractCallsTest() {
     ).noneTerminate().produceIn()
 
     requests.enqueue1(Some(helloRequest("Steven")))
-    assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Steven"))
+    assertThat(responses.dequeue1().getOrElse { null }).isEqualTo(helloReply("Hello, Steven"))
     requests.enqueue1(Some(helloRequest("Garnet")))
-    assertThat(responses.dequeue1()).isEqualTo(helloReply("Hello, Garnet"))
+    assertThat(responses.dequeue1().getOrElse { null }).isEqualTo(helloReply("Hello, Garnet"))
     requests.enqueue1(None)
     // this never finishes
     val responsesList = responses.dequeue().toList()
