@@ -3,18 +3,18 @@
 A Kotlin implementation using **Arrow Fx Coroutines** of [gRPC](https://grpc.io): A high performance, open
 source, general RPC framework that puts mobile and HTTP/2 first.
 
-###Information to run the example project (Client-Server examples)
+### Information to run the example project (Client-Server examples)
 
 After cloning the repository, the task `publishToMavenLocal` needs to be run in order to generate the gRPC client-stub and server plumbing code, so this implementation is used from **maven local repository** 
 - [Building gRPC-Kotlin](BUILDING.md)
 
-###More usages of the API - Quick tutorial
+### More usages of the API - Quick tutorial
 
 Everything is kept as in the original implementation of gRPC but now making use of the Stream from Arrow Fx Coroutines library instead of Flow from kotlinx coroutines.
 - [gRPC Basics - Kotlin/JVM][] tutorial
 - And also there are many more examples of the api testing many scenarios on client and server sides.
 
-###This repo includes the sources for the following:
+### This repo includes the sources for the following:
 
 - [protoc-gen-grpc-kotlin](compiler): A [protoc][] plugin for generating Kotlin
   gRPC client-stub and server plumbing code.
