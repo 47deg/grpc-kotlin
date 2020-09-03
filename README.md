@@ -1,13 +1,6 @@
 # gRPC-Kotlin/JVM - An RPC library and framework
 
-[![Gradle Build Status][]](https://github.com/grpc/grpc-kotlin/actions?query=workflow%3A%22Gradle+Build%22)
-[![Bazel Build Status][]](https://github.com/grpc/grpc-kotlin/actions?query=workflow%3A%22Bazel+Build%22)
-
-[![grpc-kotlin-stub][label:stub]][maven:stub]
-[![protoc-gen-grpc-kotlin][label:plugin]][maven:plugin]
-[![grpc-kotlin-stub-lite][label:stub-lite]][maven:stub-lite]
-
-A Kotlin/JVM implementation of [gRPC](https://grpc.io): A high performance, open
+A Kotlin/JVM implementation using **Arrow Fx Coroutines** of [gRPC](https://grpc.io): A high performance, open
 source, general RPC framework that puts mobile and HTTP/2 first.
 
 This repo includes the sources for the following:

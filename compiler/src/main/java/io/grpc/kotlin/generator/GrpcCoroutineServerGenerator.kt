@@ -202,7 +202,7 @@ class GrpcCoroutineServerGenerator(config: GeneratorConfig) : ServiceCodeGenerat
     val kDocBindings = mapOf(
       "requestParam" to requestParam,
       "methodName" to method.fullName,
-      "flow" to ARROW_STREAM,
+      "stream" to ARROW_STREAM,
       "status" to Status::class,
       "statusException" to StatusException::class,
       "cancellationException" to CancellationException::class,
@@ -213,13 +213,13 @@ class GrpcCoroutineServerGenerator(config: GeneratorConfig) : ServiceCodeGenerat
     val kDocSections = mutableListOf<String>()
 
     if (method.isServerStreaming) {
-      kDocSections.add("Returns a [%flow:T] of responses to an RPC for %methodName:L.")
+      kDocSections.add("Returns a [%stream:T] of responses to an RPC for %methodName:L.")
       kDocSections.add(
         """
-          If creating or collecting the returned flow fails with a [%statusException:T], the RPC
+          If creating or collecting the returned stream fails with a [%statusException:T], the RPC
           will fail with the corresponding [%status:T].  If it fails with a
           [%cancellationException:T], the RPC will fail with status `Status.CANCELLED`.  If creating
-          or collecting the returned flow fails for any other reason, the RPC will fail with
+          or collecting the returned stream fails for any other reason, the RPC will fail with
           `Status.UNKNOWN` with the exception as a cause.
         """.trimIndent()
       )
@@ -238,7 +238,7 @@ class GrpcCoroutineServerGenerator(config: GeneratorConfig) : ServiceCodeGenerat
     if (method.isClientStreaming) {
       kDocSections.add(
         """
-          @param %requestParam:N A [%flow:T] of requests from the client.  This flow can be
+          @param %requestParam:N A [%stream:T] of requests from the client.  This stream can be
                  collected only once and throws [%illegalStateException:T] on attempts to collect
                  it more than once.
         """.trimIndent()

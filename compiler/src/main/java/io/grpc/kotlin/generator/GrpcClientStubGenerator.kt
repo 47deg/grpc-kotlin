@@ -57,7 +57,6 @@ import io.grpc.Metadata as GrpcMetadata
 @VisibleForTesting
 class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(config) {
   companion object {
-    //private const val STUB_CLASS_SUFFIX = "CoroutineStub"
     private const val STUB_CLASS_SUFFIX = "ArrowCoroutineStub"
     private val UNARY_PARAMETER_NAME = MemberSimpleName("request")
     private val STREAMING_PARAMETER_NAME = MemberSimpleName("requests")
@@ -208,7 +207,7 @@ class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(co
   ): CodeBlock {
     val kDocBindings = mapOf(
       "parameter" to parameter,
-      "flow" to Stream::class,
+      "stream" to Stream::class,
       "status" to Status::class,
       "statusException" to StatusException::class
     )
@@ -218,10 +217,10 @@ class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(co
     kDocComponents.add(
       if (method.isServerStreaming) {
         """
-        Returns a [%flow:T] that, when collected, executes this RPC and emits responses from the
-        server as they arrive.  That flow finishes normally if the server closes its response with
+        Returns a [%stream:T] that, when collected, executes this RPC and emits responses from the
+        server as they arrive.  That stream finishes normally if the server closes its response with
         [`Status.OK`][%status:T], and fails by throwing a [%statusException:T] otherwise.  If
-        collecting the flow downstream fails exceptionally (including via cancellation), the RPC
+        collecting the stream downstream fails exceptionally (including via cancellation), the RPC
         is cancelled with that exception as a cause.
         """.trimIndent()
       } else {
@@ -238,11 +237,11 @@ class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(co
       MethodType.BIDI_STREAMING -> {
         kDocComponents.add(
           """
-          The [%flow:T] of requests is collected once each time the [%flow:T] of responses is
-          collected. If collection of the [%flow:T] of responses completes normally or
+          The [%stream:T] of requests is collected once each time the [%stream:T] of responses is
+          collected. If collection of the [%stream:T] of responses completes normally or
           exceptionally before collection of `%parameter:N` completes, the collection of
           `%parameter:N` is cancelled.  If the collection of `%parameter:N` completes
-          exceptionally for any other reason, then the collection of the [%flow:T] of responses
+          exceptionally for any other reason, then the collection of the [%stream:T] of responses
           completes exceptionally for the same reason and the RPC is cancelled with that reason.
           """.trimIndent()
         )
@@ -250,7 +249,7 @@ class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(co
       MethodType.CLIENT_STREAMING -> {
         kDocComponents.add(
           """
-          This function collects the [%flow:T] of requests.  If the server terminates the RPC
+          This function collects the [%stream:T] of requests.  If the server terminates the RPC
           for any reason before collection of requests is complete, the collection of requests
           will be cancelled.  If the collection of requests completes exceptionally for any other
           reason, the RPC will be cancelled for that reason and this method will throw that
@@ -264,7 +263,7 @@ class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(co
 
     kDocComponents.add(
       if (method.isClientStreaming) {
-        "@param %parameter:N A [%flow:T] of request messages."
+        "@param %parameter:N A [%stream:T] of request messages."
       } else {
         "@param %parameter:N The request message to send to the server."
       }
@@ -272,7 +271,7 @@ class GrpcClientStubGenerator(config: GeneratorConfig) : ServiceCodeGenerator(co
 
     kDocComponents.add(
       if (method.isServerStreaming) {
-        "@return A flow that, when collected, emits the responses from the server."
+        "@return A stream that, when collected, emits the responses from the server."
       } else {
         "@return The single response from the server."
       }
