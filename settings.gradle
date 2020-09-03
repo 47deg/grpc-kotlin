@@ -12,3 +12,5 @@ if (settings.hasProperty('skipCodegen') && skipCodegen.toBoolean()) {
     include ":grpc-kotlin-compiler"
     project(':grpc-kotlin-compiler').projectDir = "$rootDir/compiler" as File
 }
+
+include 'benchmarks'

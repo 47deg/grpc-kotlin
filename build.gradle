@@ -19,7 +19,10 @@ subprojects {
     apply plugin: 'java'
     apply plugin: 'org.jetbrains.kotlin.jvm'
     group = "io.grpc"
-    version = "0.1.4" // CURRENT_GRPC_KOTLIN_VERSION
+    //version = "0.1.4" // CURRENT_GRPC_KOTLIN_VERSION
+    // Changed the version to publish in mavenLocal so the examples can make use of
+    // the arrow fx coroutines implementation
+    version = "0.2" // CURRENT_GRPC_KOTLIN_VERSION
     repositories {
         mavenCentral()
     }
