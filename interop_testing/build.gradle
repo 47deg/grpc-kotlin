@@ -1,18 +1,20 @@
 buildscript {
-  repositories {
-    mavenCentral()
-  }
-  dependencies {
-    classpath 'com.google.protobuf:protobuf-gradle-plugin:0.8.11'
-    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${rootProject.ext.kotlinVersion}"
-  }
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.google.protobuf:protobuf-gradle-plugin:0.8.11'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${rootProject.ext.kotlinVersion}"
+    }
 }
 
 repositories {
-  google()
-  jcenter()
-  mavenCentral()
-  mavenLocal()
+    google()
+    jcenter()
+    mavenCentral()
+    mavenLocal()
+    maven { url "https://dl.bintray.com/arrow-kt/arrow-kt/" }
+    maven { url 'https://oss.jfrog.org/artifactory/oss-snapshot-local/' } // for SNAPSHOT builds
 }
 
 apply plugin: 'kotlin'
@@ -26,38 +28,42 @@ apply plugin: 'idea'
 apply plugin: 'application'
 
 dependencies {
-  // This repo
-  implementation project(':grpc-kotlin-stub')
+    // This repo
+    implementation project(':grpc-kotlin-stub')
 
-  implementation "org.jetbrains.kotlin:kotlin-test:${rootProject.ext.kotlinVersion}"
-  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:${rootProject.ext.coroutinesVersion}"
+    implementation "org.jetbrains.kotlin:kotlin-test:${rootProject.ext.kotlinVersion}"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:${rootProject.ext.coroutinesVersion}"
 
-  // Grpc and Protobuf
-  implementation 'com.google.protobuf:protobuf-gradle-plugin:0.8.11'
-  implementation "com.google.protobuf:protobuf-java:${rootProject.ext.protobufVersion}"
-  implementation "com.google.protobuf:protobuf-java-util:${rootProject.ext.protobufVersion}"
-  implementation "io.grpc:grpc-netty-shaded:${rootProject.ext.grpcVersion}"
-  implementation "io.grpc:grpc-protobuf:${rootProject.ext.grpcVersion}"
-  implementation "io.grpc:grpc-stub:${rootProject.ext.grpcVersion}"
-  implementation "io.grpc:grpc-auth:${rootProject.ext.grpcVersion}"
-  implementation "io.grpc:grpc-alts:${rootProject.ext.grpcVersion}"
-  implementation "io.grpc:grpc-netty:${rootProject.ext.grpcVersion}"
-  implementation "io.grpc:grpc-okhttp:${rootProject.ext.grpcVersion}"
-  implementation "io.grpc:grpc-testing:${rootProject.ext.grpcVersion}"
+    // Arrow
+    implementation "io.arrow-kt:arrow-core-data:0.11.0-SNAPSHOT"
+    implementation "io.arrow-kt:arrow-fx-coroutines:0.11.0-SNAPSHOT"
 
-  // Java
-  api "javax.annotation:javax.annotation-api:1.2"
+    // Grpc and Protobuf
+    implementation 'com.google.protobuf:protobuf-gradle-plugin:0.8.11'
+    implementation "com.google.protobuf:protobuf-java:${rootProject.ext.protobufVersion}"
+    implementation "com.google.protobuf:protobuf-java-util:${rootProject.ext.protobufVersion}"
+    implementation "io.grpc:grpc-netty-shaded:${rootProject.ext.grpcVersion}"
+    implementation "io.grpc:grpc-protobuf:${rootProject.ext.grpcVersion}"
+    implementation "io.grpc:grpc-stub:${rootProject.ext.grpcVersion}"
+    implementation "io.grpc:grpc-auth:${rootProject.ext.grpcVersion}"
+    implementation "io.grpc:grpc-alts:${rootProject.ext.grpcVersion}"
+    implementation "io.grpc:grpc-netty:${rootProject.ext.grpcVersion}"
+    implementation "io.grpc:grpc-okhttp:${rootProject.ext.grpcVersion}"
+    implementation "io.grpc:grpc-testing:${rootProject.ext.grpcVersion}"
 
-  // Google
-  implementation "com.google.guava:guava:28.2-jre"
+    // Java
+    api "javax.annotation:javax.annotation-api:1.2"
 
-  implementation "com.google.auth:google-auth-library-credentials:${rootProject.ext.googleauthVersion}"
-  implementation 'io.netty:netty-tcnative-boringssl-static:2.0.28.Final'
-  implementation "com.google.auth:google-auth-library-oauth2-http:${rootProject.ext.googleauthVersion}"
+    // Google
+    implementation "com.google.guava:guava:28.2-jre"
 
-  implementation "com.google.truth:truth:1.0.1"
+    implementation "com.google.auth:google-auth-library-credentials:${rootProject.ext.googleauthVersion}"
+    implementation 'io.netty:netty-tcnative-boringssl-static:2.0.28.Final'
+    implementation "com.google.auth:google-auth-library-oauth2-http:${rootProject.ext.googleauthVersion}"
 
-  testImplementation "org.mockito:mockito-core:2.28.2"
+    implementation "com.google.truth:truth:1.0.1"
+
+    testImplementation "org.mockito:mockito-core:2.28.2"
 }
 
 protobuf {
@@ -76,7 +82,7 @@ protobuf {
         all().each { task ->
             task.plugins {
                 // Generate Java gRPC classes
-                grpc { }
+                grpc {}
                 // Generate Kotlin gRPC using the custom plugin from library
                 grpckt {
                     task.dependsOn ':grpc-kotlin-compiler:build'

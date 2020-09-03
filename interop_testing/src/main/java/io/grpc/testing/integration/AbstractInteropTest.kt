@@ -15,6 +15,20 @@
  */
 package io.grpc.testing.integration
 
+import arrow.core.None
+import arrow.core.Option
+import arrow.core.Some
+import arrow.fx.coroutines.Environment
+import arrow.fx.coroutines.milliseconds
+import arrow.fx.coroutines.sleep
+import arrow.fx.coroutines.stream.Stream
+import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.drain
+import arrow.fx.coroutines.stream.filterOption
+import arrow.fx.coroutines.stream.firstOrError
+import arrow.fx.coroutines.stream.handleErrorWith
+import arrow.fx.coroutines.stream.lastOrError
+import arrow.fx.coroutines.stream.toList
 import com.google.auth.oauth2.ComputeEngineCredentials
 import com.google.auth.oauth2.GoogleCredentials
 import com.google.auth.oauth2.OAuth2Credentials
@@ -48,6 +62,7 @@ import io.grpc.auth.MoreCallCredentials
 import io.grpc.internal.testing.TestClientStreamTracer
 import io.grpc.internal.testing.TestServerStreamTracer
 import io.grpc.internal.testing.TestStreamTracer
+import io.grpc.kotlin.produceIn
 import io.grpc.stub.MetadataUtils
 import io.grpc.testing.TestUtils
 import io.grpc.testing.integration.Messages.BoolValue
@@ -61,24 +76,6 @@ import io.grpc.testing.integration.Messages.StreamingInputCallRequest
 import io.grpc.testing.integration.Messages.StreamingInputCallResponse
 import io.grpc.testing.integration.Messages.StreamingOutputCallRequest
 import io.grpc.testing.integration.Messages.StreamingOutputCallResponse
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.channels.toList
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.asFlow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.consumeAsFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.produceIn
-import kotlinx.coroutines.flow.single
-import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -98,7 +95,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.net.SocketAddress
 import java.util.Arrays
-import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ScheduledExecutorService
@@ -107,7 +104,7 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.logging.Level
 import java.util.logging.Logger
 import java.util.regex.Pattern
-import kotlin.math.max
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.assertFailsWith
 
 /**
@@ -116,8 +113,6 @@ import kotlin.test.assertFailsWith
  *
  *  New tests should avoid using Mockito to support running on AppEngine.
  */
-@ExperimentalCoroutinesApi
-@FlowPreview
 abstract class AbstractInteropTest {
   @get:Rule
   val globalTimeout: TestRule
@@ -174,7 +169,8 @@ abstract class AbstractInteropTest {
     builder
       .addService(
         ServerInterceptors.intercept(
-          TestServiceImpl(executor),
+          //TestServiceImpl(executor),
+          TestServiceImpl(),
           allInterceptors
         )
       )
@@ -197,7 +193,7 @@ abstract class AbstractInteropTest {
 
   protected lateinit var channel: ManagedChannel
 
-  protected lateinit var stub: TestServiceGrpcKt.TestServiceCoroutineStub
+  protected lateinit var stub: TestServiceGrpcKt.TestServiceArrowCoroutineStub
 
   // to be deleted when subclasses are ready to migrate
   @JvmField
@@ -239,7 +235,7 @@ abstract class AbstractInteropTest {
     startServer()
     channel = createChannel()
     stub =
-      TestServiceGrpcKt.TestServiceCoroutineStub(channel).withInterceptors(tracerSetupInterceptor)
+      TestServiceGrpcKt.TestServiceArrowCoroutineStub(channel).withInterceptors(tracerSetupInterceptor)
     blockingStub = TestServiceGrpc.newBlockingStub(channel).withInterceptors(tracerSetupInterceptor)
     asyncStub = TestServiceGrpc.newStub(channel).withInterceptors(tracerSetupInterceptor)
     val additionalInterceptors = additionalInterceptors
@@ -406,7 +402,7 @@ abstract class AbstractInteropTest {
       val firstResponse = stub.unaryCall(request)
       // Increase the chance of all servers are connected, in case the channel should be doing
       // round_robin instead.
-      delay(5000)
+      sleep(5000.milliseconds)
       for (i in 0..99) {
         val response = stub.unaryCall(request)
         assertThat(response.serverId).isEqualTo(firstResponse.serverId)
@@ -467,7 +463,7 @@ abstract class AbstractInteropTest {
 
   @Test
   fun clientStreaming() {
-    val requests = Arrays.asList(
+    val requests: Stream<StreamingInputCallRequest> = Stream(
       StreamingInputCallRequest.newBuilder()
         .setPayload(
           Payload.newBuilder()
@@ -497,7 +493,7 @@ abstract class AbstractInteropTest {
       .setAggregatedPayloadSize(74922)
       .build()
     val response = runBlocking {
-      stub.streamingInputCall(requests.asFlow())
+      stub.streamingInputCall(requests)
     }
     assertEquals(goldenResponse, response)
   }
@@ -516,7 +512,7 @@ abstract class AbstractInteropTest {
         val ex = assertFailsWith<StatusException> {
           // Send a non-compressed message with expectCompress=true. Servers supporting this test
           // case should return INVALID_ARGUMENT.
-          stub.streamingInputCall(flowOf(expectCompressedRequest))
+          stub.streamingInputCall(Stream(expectCompressedRequest))
         }
         assertEquals(Status.INVALID_ARGUMENT.code, ex.status.code)
       }
@@ -558,7 +554,7 @@ abstract class AbstractInteropTest {
 
   @Test
   fun pingPong() {
-    val requests = Arrays.asList(
+    val requests = Stream(
       StreamingOutputCallRequest.newBuilder()
         .addResponseParameters(
           ResponseParameters.newBuilder()
@@ -628,14 +624,14 @@ abstract class AbstractInteropTest {
     )
     runBlocking {
       // TODO: per-element timeout
-      assertResponses(goldenResponses, stub.fullDuplexCall(requests.asFlow()).toList())
+      assertResponses(goldenResponses, stub.fullDuplexCall(requests).toList())
     }
   }
 
   @Test
   fun emptyStream() {
     runBlocking {
-      assertResponses(listOf(), stub.fullDuplexCall(flowOf()).toList())
+      assertResponses(listOf(), stub.fullDuplexCall(Stream()).toList())
     }
   }
 
@@ -645,7 +641,7 @@ abstract class AbstractInteropTest {
     runBlocking {
       assertFailsWith<MyEx> {
         stub.streamingInputCall(
-          flow {
+          Stream.effect {
             throw MyEx()
           }
         )
@@ -670,12 +666,11 @@ abstract class AbstractInteropTest {
       val ex = assertFailsWith<StatusException> {
         stub
           .fullDuplexCall(
-            flow {
-              emit(request)
+            Stream.effect {
+              request
               throw CancellationException()
             }
-          )
-          .collect()
+          ).drain()
       }
       assertThat(ex.status.code).isEqualTo(Status.Code.CANCELLED)
     }
@@ -695,7 +690,7 @@ abstract class AbstractInteropTest {
     val numRequests = 10
     val responses = runBlocking {
       stub.fullDuplexCall(
-        (1..numRequests).asFlow().map { request }
+        Stream.range(1..numRequests).map { request }
       ).toList()
     }
     assertEquals(responseSizes.size * numRequests, responses.size)
@@ -725,7 +720,7 @@ abstract class AbstractInteropTest {
 
     val numRequests = 10
     val responses = runBlocking {
-      stub.halfDuplexCall((1..numRequests).asFlow().map { request }).toList()
+      stub.halfDuplexCall(Stream.range(1..numRequests).map { request }).toList()
     }
     assertEquals(responseSizes.size * numRequests, responses.size)
     for ((ix, response) in responses.withIndex()) {
@@ -736,7 +731,7 @@ abstract class AbstractInteropTest {
   }
 
   @Test
-  fun serverStreamingShouldBeFlowControlled() {
+  fun serverStreamingShouldBeFlowControlled() = runBlocking {
     val request = StreamingOutputCallRequest.newBuilder()
       .addResponseParameters(ResponseParameters.newBuilder().setSize(100000))
       .addResponseParameters(ResponseParameters.newBuilder().setSize(100001))
@@ -756,17 +751,17 @@ abstract class AbstractInteropTest {
     val start = System.nanoTime()
 
     // TODO(lowasser): change this to a Channel
-    val queue = ArrayBlockingQueue<Any>(10)
+    val queue = Queue.unsafeBounded<Any>(10)
     val call = channel.newCall(TestServiceGrpc.getStreamingOutputCallMethod(), CallOptions.DEFAULT)
     call.start(
       object : ClientCall.Listener<StreamingOutputCallResponse>() {
         override fun onHeaders(headers: Metadata) {}
         override fun onMessage(message: StreamingOutputCallResponse) {
-          queue.add(message)
+          queue.tryOffer1(message)
         }
 
         override fun onClose(status: Status, trailers: Metadata) {
-          queue.add(status)
+          queue.tryOffer1(status)
         }
       },
       Metadata()
@@ -775,7 +770,9 @@ abstract class AbstractInteropTest {
     call.halfClose()
     // Time how long it takes to get the first response.
     call.request(1)
-    var response = queue.poll(operationTimeoutMillis().toLong(), TimeUnit.MILLISECONDS)
+    // TODO: add poll ?
+    // var response = queue.poll(operationTimeoutMillis().toLong(), TimeUnit.MILLISECONDS)
+    var response = queue.dequeue1()
     assertTrue(response is StreamingOutputCallResponse)
     assertResponse(goldenResponses[0], response as StreamingOutputCallResponse)
     val firstCallDuration = System.nanoTime() - start
@@ -785,14 +782,17 @@ abstract class AbstractInteropTest {
     // handling is instantaneous. In both cases, firstCallDuration may be 0, so round up sleep time
     // to at least 1ms.
     assertNull(
-      queue.poll(max(firstCallDuration * 4, 1 * 1000 * 1000.toLong()), TimeUnit.NANOSECONDS)
+      //queue.poll(max(firstCallDuration * 4, 1 * 1000 * 1000.toLong()), TimeUnit.NANOSECONDS)
+      queue.dequeue1()
     )
     // Make sure that everything still completes.
     call.request(1)
-    response = queue.poll(operationTimeoutMillis().toLong(), TimeUnit.MILLISECONDS)
+    //response = queue.poll(operationTimeoutMillis().toLong(), TimeUnit.MILLISECONDS)
+    response = queue.dequeue1()
     assertTrue(response is StreamingOutputCallResponse)
     assertResponse(goldenResponses[1], response as StreamingOutputCallResponse)
-    assertEquals(Status.OK, queue.poll(operationTimeoutMillis().toLong(), TimeUnit.MILLISECONDS))
+    //assertEquals(Status.OK, queue.poll(operationTimeoutMillis().toLong(), TimeUnit.MILLISECONDS))
+    assertEquals(Status.OK, queue.dequeue1())
   }
 
   @Test
@@ -876,7 +876,7 @@ abstract class AbstractInteropTest {
 
     val numRequests = 10
     val responses = runBlocking {
-      stub.fullDuplexCall((1..numRequests).asFlow().map { request }).toList()
+      stub.fullDuplexCall(Stream.range(1..numRequests).map { request }).toList()
     }
     assertEquals(responseSizes.size * numRequests, responses.size)
     // Assert that our side channel object is echoed back in both headers and trailers
@@ -899,11 +899,11 @@ abstract class AbstractInteropTest {
             )
             .build()
         )
-        .first()
+        .firstOrError()
     }
   }
 
-  @Test
+  @Test // debugging works
   fun deadlineExceeded() {
     runBlocking {
       // warm up the channel and JVM
@@ -915,7 +915,7 @@ abstract class AbstractInteropTest {
         )
         .build()
       try {
-        stub.withDeadlineAfter(100, TimeUnit.MILLISECONDS).streamingOutputCall(request).first()
+        stub.withDeadlineAfter(100, TimeUnit.MILLISECONDS).streamingOutputCall(request).firstOrError()
         fail("Expected deadline to be exceeded")
       } catch (ex: StatusException) {
         assertEquals(Status.DEADLINE_EXCEEDED.code, ex.status.code)
@@ -951,7 +951,7 @@ abstract class AbstractInteropTest {
         stub
           .withDeadlineAfter(30, TimeUnit.MILLISECONDS)
           .streamingOutputCall(request)
-          .collect()
+          .drain()
       }
       assertEquals(Status.DEADLINE_EXCEEDED.code, statusEx.status.code)
       assertStatsTrace("grpc.testing.TestService/EmptyCall", Status.Code.OK)
@@ -1047,22 +1047,21 @@ abstract class AbstractInteropTest {
           .build()
       )
 
-      val requestChannel = kotlinx.coroutines.channels.Channel<StreamingOutputCallRequest>()
+      val requestChannel = Queue.unsafeUnbounded<Option<StreamingOutputCallRequest>>()
 
-      val responses = stub.fullDuplexCall(requestChannel.consumeAsFlow()).produceIn(this)
+      val responses = stub.fullDuplexCall(requestChannel.dequeue().filterOption()).produceIn()
 
-      requestChannel.send(requests[0])
-      assertResponse(goldenResponses[0], responses.receive())
+      requestChannel.enqueue1(Some(requests[0]))
+      assertResponse(goldenResponses[0], responses.dequeue1())
       // Initiate graceful shutdown.
       channel.shutdown()
-      requestChannel.send(requests[1])
-      assertResponse(goldenResponses[1], responses.receive())
+      requestChannel.enqueue1(Some(requests[1]))
+      assertResponse(goldenResponses[1], responses.dequeue1())
       // The previous ping-pong could have raced with the shutdown, but this one certainly shouldn't.
-      requestChannel.send(requests[2])
-      assertResponse(goldenResponses[2], responses.receive())
-      assertFalse(responses.isClosedForReceive)
-      requestChannel.close()
-      assertThat(responses.toList()).isEmpty()
+      requestChannel.enqueue1(Some(requests[2]))
+      assertResponse(goldenResponses[2], responses.dequeue1())
+      requestChannel.enqueue1(None)
+      assertThat(responses.dequeue().toList()).isEmpty()
     }
   }
 
@@ -1129,7 +1128,7 @@ abstract class AbstractInteropTest {
     trailersCapture = AtomicReference()
     theStreamingStub = MetadataUtils.captureMetadata(theStreamingStub, headersCapture, trailersCapture)
     runBlocking {
-      assertResponse(goldenStreamingResponse, theStreamingStub.fullDuplexCall(flowOf(streamingRequest)).single())
+      assertResponse(goldenStreamingResponse, theStreamingStub.fullDuplexCall(Stream(streamingRequest)).lastOrError())
     }
     assertEquals(
       "test_initial_metadata_value",
@@ -1172,7 +1171,7 @@ abstract class AbstractInteropTest {
       assertStatsTrace("grpc.testing.TestService/UnaryCall", Status.Code.UNKNOWN)
       // Test FullDuplexCall
       val status = assertFailsWith<StatusException> {
-        stub.fullDuplexCall(flowOf(streamingRequest)).collect()
+        stub.fullDuplexCall(Stream(streamingRequest)).drain()
       }.status
       assertEquals(Status.UNKNOWN.code, status.code)
       assertEquals(errorMessage, status.description)
@@ -1180,7 +1179,7 @@ abstract class AbstractInteropTest {
     }
   }
 
-  @Test
+  @Test // fails because ClientCall.Listener.onClose not called
   fun specialStatusMessage() {
     val errorCode = 2
     val errorMessage = "\t\ntest with whitespace\r\nand Unicode BMP ☺ and non-BMP 😈\t\n"
@@ -1205,7 +1204,7 @@ abstract class AbstractInteropTest {
   }
 
   /** Sends an rpc to an unimplemented method within TestService.  */
-  @Test
+  @Test // fails because ClientCall.Listener.onClose not called
   fun unimplementedMethod() {
     runBlocking {
       val ex = assertFailsWith<StatusException> {
@@ -1223,7 +1222,7 @@ abstract class AbstractInteropTest {
   @Test
   fun unimplementedService() {
     val stub =
-      UnimplementedServiceGrpcKt.UnimplementedServiceCoroutineStub(channel)
+      UnimplementedServiceGrpcKt.UnimplementedServiceArrowCoroutineStub(channel)
         .withInterceptors(tracerSetupInterceptor)
     runBlocking {
       val ex = assertFailsWith<StatusException> {
@@ -1248,10 +1247,14 @@ abstract class AbstractInteropTest {
       )
       .build()
     runBlocking {
-      val caught = CompletableDeferred<Throwable>()
-      val responses = stub.fullDuplexCall(flowOf(request)).catch { caught.complete(it) }.toList()
+      val caught = UnsafePromise<Throwable>()
+      val responses = stub.fullDuplexCall(Stream(request))
+        .handleErrorWith {
+          caught.complete(Result.success(it))
+          Stream(it)
+        }.toList()
       assertThat(responses).isEmpty()
-      assertEquals(Status.DEADLINE_EXCEEDED.code, (caught.getCompleted() as StatusException).status.code)
+      assertEquals(Status.DEADLINE_EXCEEDED.code, (caught.join() as StatusException).status.code)
     }
   }
 
@@ -1337,7 +1340,7 @@ abstract class AbstractInteropTest {
   /** Sends an unary rpc with ComputeEngineChannelBuilder.  */
   fun computeEngineChannelCredentials(
     defaultServiceAccount: String,
-    computeEngineStub: TestServiceGrpcKt.TestServiceCoroutineStub
+    computeEngineStub: TestServiceGrpcKt.TestServiceArrowCoroutineStub
   ) = runBlocking {
     val request = SimpleRequest.newBuilder()
       .setFillUsername(true)
@@ -1413,7 +1416,7 @@ abstract class AbstractInteropTest {
   /** Sends an unary rpc with "google default credentials".  */
   fun googleDefaultCredentials(
     defaultServiceAccount: String,
-    googleDefaultStub: TestServiceGrpcKt.TestServiceCoroutineStub
+    googleDefaultStub: TestServiceGrpcKt.TestServiceArrowCoroutineStub
   ) = runBlocking {
     val request = SimpleRequest.newBuilder()
       .setFillUsername(true)
@@ -1604,8 +1607,10 @@ abstract class AbstractInteropTest {
 
   companion object {
     private val logger = Logger.getLogger(AbstractInteropTest::class.java.name)
+
     /** Must be at least [.unaryPayloadLength], plus some to account for encoding overhead.  */
     const val MAX_MESSAGE_SIZE = 16 * 1024 * 1024
+
     @JvmField
     protected val EMPTY = EmptyProtos.Empty.getDefaultInstance()
 
@@ -1679,7 +1684,7 @@ abstract class AbstractInteropTest {
    * Constructor for tests.
    */
   init {
-    var timeout: TestRule = Timeout.seconds(60)
+    var timeout: TestRule = Timeout.seconds(10)
     try {
       timeout = DisableOnDebug(timeout)
     } catch (t: Throwable) { // This can happen on Android, which lacks some standard Java class.
@@ -1688,4 +1693,8 @@ abstract class AbstractInteropTest {
     }
     globalTimeout = timeout
   }
+}
+
+fun <R> runBlocking(block: suspend () -> R) = Environment(EmptyCoroutineContext).unsafeRunSync {
+  block()
 }

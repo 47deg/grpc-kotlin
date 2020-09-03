@@ -16,6 +16,17 @@
 
 package io.grpc.kotlin
 
+import arrow.core.None
+import arrow.core.Option
+import arrow.core.Some
+import arrow.fx.coroutines.Environment
+import arrow.fx.coroutines.ExitCase
+import arrow.fx.coroutines.Semaphore
+import arrow.fx.coroutines.stream.Stream
+import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.drain
+import arrow.fx.coroutines.stream.flatten
+import arrow.fx.coroutines.stream.terminateOnNone
 import io.grpc.MethodDescriptor
 import io.grpc.MethodDescriptor.MethodType.BIDI_STREAMING
 import io.grpc.MethodDescriptor.MethodType.CLIENT_STREAMING
@@ -26,22 +37,12 @@ import io.grpc.ServerCallHandler
 import io.grpc.ServerMethodDefinition
 import io.grpc.Status
 import io.grpc.StatusException
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.async
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.CancellationException
 import kotlin.coroutines.CoroutineContext
 import io.grpc.Metadata as GrpcMetadata
 
 /**
- * Helpers for implementing a gRPC server based on a Kotlin coroutine implementation.
+ * Helpers for implementing a gRPC server based on Arrow Fx coroutines implementation.
  */
 object ServerCalls {
   /**
@@ -71,10 +72,10 @@ object ServerCalls {
     require(descriptor.type == UNARY) {
       "Expected a unary method descriptor but got $descriptor"
     }
-    return serverMethodDefinition(context, descriptor) { requests ->
+    return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
       requests
-        .singleOrStatusFlow("request", descriptor)
-        .map { implementation(it) }
+        .singleOrStatusStream("request", descriptor)
+        .effectMap(implementation)
     }
   }
 
@@ -97,16 +98,13 @@ object ServerCalls {
   fun <RequestT, ResponseT> clientStreamingServerMethodDefinition(
     context: CoroutineContext,
     descriptor: MethodDescriptor<RequestT, ResponseT>,
-    implementation: suspend (requests: Flow<RequestT>) -> ResponseT
+    implementation: suspend (requests: Stream<RequestT>) -> ResponseT
   ): ServerMethodDefinition<RequestT, ResponseT> {
     require(descriptor.type == CLIENT_STREAMING) {
       "Expected a client streaming method descriptor but got $descriptor"
     }
-    return serverMethodDefinition(context, descriptor) { requests ->
-      flow {
-        val response = implementation(requests)
-        emit(response)
-      }
+    return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
+      Stream.effect { implementation(requests) }
     }
   }
 
@@ -128,19 +126,16 @@ object ServerCalls {
   fun <RequestT, ResponseT> serverStreamingServerMethodDefinition(
     context: CoroutineContext,
     descriptor: MethodDescriptor<RequestT, ResponseT>,
-    implementation: (request: RequestT) -> Flow<ResponseT>
+    implementation: (request: RequestT) -> Stream<ResponseT>
   ): ServerMethodDefinition<RequestT, ResponseT> {
     require(descriptor.type == SERVER_STREAMING) {
       "Expected a server streaming method descriptor but got $descriptor"
     }
-    return serverMethodDefinition(context, descriptor) { requests ->
-      flow {
-        requests
-          .singleOrStatusFlow("request", descriptor)
-          .collect { req ->
-            implementation(req).collect { resp -> emit(resp) }
-          }
-      }
+
+    return serverMethodDefinition(context, descriptor) { requests: Stream<RequestT> ->
+      requests
+        .singleOrStatusStream("request", descriptor)
+        .flatMap(implementation)
     }
   }
 
@@ -163,7 +158,7 @@ object ServerCalls {
   fun <RequestT, ResponseT> bidiStreamingServerMethodDefinition(
     context: CoroutineContext,
     descriptor: MethodDescriptor<RequestT, ResponseT>,
-    implementation: (requests: Flow<RequestT>) -> Flow<ResponseT>
+    implementation: (requests: Stream<RequestT>) -> Stream<ResponseT>
   ): ServerMethodDefinition<RequestT, ResponseT> {
     require(descriptor.type == BIDI_STREAMING) {
       "Expected a bidi streaming method descriptor but got $descriptor"
@@ -179,7 +174,7 @@ object ServerCalls {
   private fun <RequestT, ResponseT> serverMethodDefinition(
     context: CoroutineContext,
     descriptor: MethodDescriptor<RequestT, ResponseT>,
-    implementation: (Flow<RequestT>) -> Flow<ResponseT>
+    implementation: (Stream<RequestT>) -> Stream<ResponseT>
   ): ServerMethodDefinition<RequestT, ResponseT> =
     ServerMethodDefinition.create(
       descriptor,
@@ -192,10 +187,10 @@ object ServerCalls {
    */
   private fun <RequestT, ResponseT> serverCallHandler(
     context: CoroutineContext,
-    implementation: (Flow<RequestT>) -> Flow<ResponseT>
+    implementation: (Stream<RequestT>) -> Stream<ResponseT>
   ): ServerCallHandler<RequestT, ResponseT> =
-    ServerCallHandler {
-      call, _ -> serverCallListener(
+    ServerCallHandler { call, _ ->
+      serverCallListener(
         context
           + CoroutineContextServerInterceptor.COROUTINE_CONTEXT_KEY.get()
           + GrpcContextElement.current(),
@@ -207,88 +202,89 @@ object ServerCalls {
   private fun <RequestT, ResponseT> serverCallListener(
     context: CoroutineContext,
     call: ServerCall<RequestT, ResponseT>,
-    implementation: (Flow<RequestT>) -> Flow<ResponseT>
+    implementation: (Stream<RequestT>) -> Stream<ResponseT>
   ): ServerCall.Listener<RequestT> {
     call.sendHeaders(GrpcMetadata())
 
-    val readiness = Readiness { call.isReady }
-    val requestsChannel = Channel<RequestT>(1)
+    val readiness = Readiness {
+      println("ServerCalls Readiness call.isReady? ${call.isReady}")
+      call.isReady
+    }
+    val requestsChannel = Queue.unsafeBounded<Option<RequestT>>(1)
 
-    val requestsStarted = AtomicBoolean(false) // enforces read-once
+    // We complete this latch when processing requests fails, or when we halfClose.
+    val isActive = UnsafePromise<Unit>()
 
-    val requests = flow<RequestT> {
-      check(requestsStarted.compareAndSet(false, true)) {
-        "requests flow can only be collected once"
-      }
-
-      call.request(1)
-      try {
-        for (request in requestsChannel) {
-          emit(request)
-          call.request(1)
+    // TODO should we request messages in `Chunks` ???
+    val requests = Stream.effect { call.request(1) } // Request first message
+      .flatMap {
+        requestsChannel
+          .dequeue()
+          .terminateOnNone()
+          // For every value we receive, we need to request the next one
+          .effectTap { call.request(1) }
+      }.onFinalizeCase { exitCase ->
+        println("ServerCall.Requests.onFinalizeCase: $exitCase")
+        if (ExitCase.Completed != exitCase) {
+          call.request(1) // make sure we don't cause backpressure
         }
-      } catch (e: Exception) {
-        requestsChannel.cancel(
-          CancellationException("Exception thrown while collecting requests", e)
-        )
-        call.request(1) // make sure we don't cause backpressure
-        throw e
       }
-    }
 
-    val rpcScope = CoroutineScope(context)
-    val rpcJob = rpcScope.async {
-      runCatching {
-        implementation(requests).collect {
-          readiness.suspendUntilReady()
-          call.sendMessage(it)
+    // Runs async cancellable on the provided context, always returns a new cancellable scope.
+    val rpcCancelToken = Environment(context).unsafeRunAsyncCancellable {
+      val semaphore = Semaphore(1)
+      Stream.effect {
+        implementation(requests)
+          .effectMap { response: ResponseT ->
+            println("ServerCalls.Server.effectMap.suspendUntilReady")
+            readiness.suspendUntilReady()
+            println("ServerCalls.Server.effectMap.sendMessage: $response")
+            semaphore.withPermit { call.sendMessage(response) }
+          }
+      }.flatten()
+        .onFinalizeCase { case ->
+          println("ServerCalls.Server.onFinalizeCase: $case")
+          semaphore.withPermit {
+            when (case) {
+              ExitCase.Completed -> call.close(Status.OK, GrpcMetadata())
+              ExitCase.Cancelled -> call.close(Status.CANCELLED, GrpcMetadata())
+              is ExitCase.Failure ->
+                call.close(Status.fromThrowable(case.failure), Status.trailersFromThrowable(case.failure))
+            }
+          }
         }
-      }.exceptionOrNull()
+        .attempt() // We have already forwarded any errors in call.close
+        .drain()
     }
 
-    rpcJob.invokeOnCompletion { cause ->
-      val failure = cause ?: rpcJob.doneValue
-      val closeStatus = when (failure) {
-        null -> Status.OK
-        is CancellationException -> Status.CANCELLED.withCause(failure)
-        else -> Status.fromThrowable(failure)
-      }
-      val trailers = failure?.let { Status.trailersFromThrowable(it) } ?: GrpcMetadata()
-      call.close(closeStatus, trailers)
-    }
-
-    return object: ServerCall.Listener<RequestT>() {
-      var isReceiving = true
-
+    return object : ServerCall.Listener<RequestT>() {
       override fun onCancel() {
-        rpcScope.cancel("Cancellation received from client")
+        println("ServerCall.Listener.onCancel()")
+        rpcCancelToken.invoke()
       }
 
       override fun onMessage(message: RequestT) {
-        if (isReceiving) {
-          try {
-            if (!requestsChannel.offer(message)) {
-              throw Status.INTERNAL
-                .withDescription(
-                  "onMessage should never be called when requestsChannel is unready"
-                )
-                .asException()
-            }
-          } catch (e: CancellationException) {
-            // we don't want any more client input; swallow it
-            isReceiving = false
-          }
+        println("ServerCall.Listener.onMessage($message)")
+        if (isActive.isEmpty() && !requestsChannel.tryOffer1(Some(message))) {
+          throw Status.INTERNAL
+            .withDescription("onMessage should never be called when requestsChannel is unready")
+            .asException()
         }
-        if (!isReceiving) {
+
+        if (!isActive.isEmpty()) {
           call.request(1) // do not exert backpressure
         }
       }
 
       override fun onHalfClose() {
-        requestsChannel.close()
+        println("ServerCall.Listener.onHalfClose()")
+        isActive.complete(Result.success(Unit))
+        // close the queue
+        requestsChannel.tryOffer1(None)
       }
 
       override fun onReady() {
+        println("ServerCall.Listener.onReady")
         readiness.onReady()
       }
     }

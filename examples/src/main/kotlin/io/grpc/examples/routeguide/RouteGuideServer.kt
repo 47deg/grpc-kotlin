@@ -16,20 +16,15 @@
 
 package io.grpc.examples.routeguide
 
+import arrow.fx.coroutines.stream.Stream
 import com.google.common.base.Stopwatch
 import com.google.common.base.Ticker
 import com.google.common.io.ByteSource
 import com.google.protobuf.util.Durations
 import io.grpc.Server
 import io.grpc.ServerBuilder
-import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.asFlow
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.flow
 
 /**
  * Kotlin adaptation of RouteGuideServer from the Java gRPC example.
@@ -51,19 +46,19 @@ class RouteGuideServer private constructor(
         port: Int,
         features: Collection<Feature>
     ) : this(
-            port = port,
-            server = serverBuilder.addService(RouteGuideService(features)).build()
+        port = port,
+        server = serverBuilder.addService(RouteGuideService(features)).build()
     )
 
     fun start() {
         server.start()
         println("Server started, listening on $port")
         Runtime.getRuntime().addShutdownHook(
-                Thread {
-                    println("*** shutting down gRPC server since JVM is shutting down")
-                    this@RouteGuideServer.stop()
-                    println("*** server shut down")
-                }
+            Thread {
+                println("*** shutting down gRPC server since JVM is shutting down")
+                this@RouteGuideServer.stop()
+                println("*** server shut down")
+            }
         )
     }
 
@@ -82,19 +77,19 @@ class RouteGuideServer private constructor(
         private val routeNotes = ConcurrentHashMap<Point, MutableList<RouteNote>>()
 
         override suspend fun getFeature(request: Point): Feature =
-                // No feature was found, return an unnamed feature.
-                features.find { it.location == request } ?: Feature.newBuilder().apply { location = request }.build()
+            // No feature was found, return an unnamed feature.
+            features.find { it.location == request } ?: Feature.newBuilder().apply { location = request }.build()
 
-        override fun listFeatures(request: Rectangle): Flow<Feature> =
-                features.asFlow().filter { it.exists() && it.location in request }
+        override fun listFeatures(request: Rectangle): Stream<Feature> =
+            Stream.iterable(features).filter { it.exists() && it.location in request }
 
-        override suspend fun recordRoute(requests: Flow<Point>): RouteSummary {
+        override suspend fun recordRoute(requests: Stream<Point>): RouteSummary {
             var pointCount = 0
             var featureCount = 0
             var distance = 0
             var previous: Point? = null
             val stopwatch = Stopwatch.createStarted(ticker)
-            requests.collect { request ->
+            requests.effectMap { request ->
                 pointCount++
                 if (getFeature(request).exists()) {
                     featureCount++
@@ -113,17 +108,29 @@ class RouteGuideServer private constructor(
             }.build()
         }
 
-        override fun routeChat(requests: Flow<RouteNote>): Flow<RouteNote> = flow {
-            requests.collect { note ->
-                val notes: MutableList<RouteNote> = routeNotes.computeIfAbsent(note.location) {
-                    Collections.synchronizedList(mutableListOf<RouteNote>())
-                }
-                for (prevNote in notes.toTypedArray()) { // thread-safe snapshot
-                    emit(prevNote)
-                }
-                notes += note
-            }
-        }
+        override fun routeChat(requests: Stream<RouteNote>): Stream<RouteNote> =
+//      flow {
+//        requests.collect { note ->
+//          val notes: MutableList<RouteNote> = routeNotes.computeIfAbsent(note.location) {
+//            Collections.synchronizedList(mutableListOf<RouteNote>())
+//          }
+//          for (prevNote in notes.toTypedArray()) { // thread-safe snapshot
+//            emit(prevNote)
+//          }
+//          notes += note
+//        }
+//      }
+        // FIXME: flatten() isn't working
+//      Stream.effect {
+//        requests.effectMap { note ->
+//          val notes: MutableList<RouteNote> = routeNotes.computeIfAbsent(note.location) {
+//            Collections.synchronizedList(mutableListOf<RouteNote>())
+//          }
+//          notes += note
+//          Stream.iterable(notes)
+//        }.flatten()
+//      }
+            requests
     }
 }
 

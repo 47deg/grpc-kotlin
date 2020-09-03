@@ -22,11 +22,23 @@ repositories {
     jcenter()
     mavenCentral()
     mavenLocal()
+    maven { url "https://dl.bintray.com/arrow-kt/arrow-kt/" }
+    maven { url 'https://oss.jfrog.org/artifactory/oss-snapshot-local/' } // for SNAPSHOT builds
+}
+
+compileTestKotlin {
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
 }
 
 dependencies {
     // Kotlin
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:${rootProject.ext.coroutinesVersion}"
+
+    // Arrow
+    implementation "io.arrow-kt:arrow-core-data:0.11.0-SNAPSHOT"
+    implementation "io.arrow-kt:arrow-fx-coroutines:0.11.0-SNAPSHOT"
 
     // Grpc and Protobuf
     implementation "io.grpc:grpc-protobuf:${rootProject.ext.grpcVersion}"
@@ -63,9 +75,9 @@ protobuf {
             }
             task.plugins {
                 // Generate Java gRPC classes
-                grpc { }
+                grpc {}
                 // Generate Kotlin gRPC using the custom plugin from library
-                grpckt { }
+                grpckt {}
             }
         }
     }

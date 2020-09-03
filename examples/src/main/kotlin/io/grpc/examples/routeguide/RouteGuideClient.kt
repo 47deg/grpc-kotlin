@@ -16,28 +16,27 @@
 
 package io.grpc.examples.routeguide
 
+import arrow.fx.coroutines.milliseconds
+import arrow.fx.coroutines.sleep
+import arrow.fx.coroutines.stream.Stream
 import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
-import io.grpc.examples.routeguide.RouteGuideGrpcKt.RouteGuideCoroutineStub
+import io.grpc.examples.routeguide.RouteGuideGrpcKt.RouteGuideArrowCoroutineStub
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.asExecutor
+import kotlinx.coroutines.runBlocking
 import java.io.Closeable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 import kotlin.random.nextLong
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.asExecutor
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.runBlocking
 
 class RouteGuideClient private constructor(
     private val channel: ManagedChannel
 ) : Closeable {
     private val random = Random(314159)
-    private val stub = RouteGuideCoroutineStub(channel)
+    private val stub = RouteGuideArrowCoroutineStub(channel)
 
     constructor(
         channelBuilder: ManagedChannelBuilder<*>,
@@ -65,16 +64,16 @@ class RouteGuideClient private constructor(
         println("*** ListFeatures: lowLat=$lowLat lowLon=$lowLon hiLat=$hiLat liLon=$hiLon")
 
         val request = Rectangle.newBuilder()
-                .setLo(point(lowLat, lowLon))
-                .setHi(point(hiLat, hiLon))
-                .build()
+            .setLo(point(lowLat, lowLon))
+            .setHi(point(hiLat, hiLon))
+            .build()
         var i = 1
-        stub.listFeatures(request).collect { feature ->
+        stub.listFeatures(request).effectTap { feature ->
             println("Result #${i++}: $feature")
         }
     }
 
-    fun recordRoute(points: Flow<Point>) = runBlocking {
+    fun recordRoute(points: Stream<Point>) = runBlocking {
         println("*** RecordRoute")
         val summary = stub.recordRoute(points)
         println("Finished trip with ${summary.pointCount} points.")
@@ -84,53 +83,49 @@ class RouteGuideClient private constructor(
         println("It took $duration seconds.")
     }
 
-    fun generateRoutePoints(features: List<Feature>, numPoints: Int): Flow<Point> = flow {
-        for (i in 1..numPoints) {
-            val feature = features.random(random)
-            println("Visiting point ${feature.location.toStr()}")
-            emit(feature.location)
-            delay(timeMillis = random.nextLong(500L..1500L))
-        }
-    }
+    fun generateRoutePoints(features: List<Feature>, numPoints: Int): Stream<Point> =
+        Stream.range(1..numPoints)
+            .effectMap {
+                val feature = features.random(random)
+                println("Visiting point ${feature.location.toStr()}")
+                feature.location
+            }.effectTap { sleep(random.nextLong(500L..1500L).milliseconds) }
 
     fun routeChat() = runBlocking {
         println("*** RouteChat")
         val requests = generateOutgoingNotes()
-        stub.routeChat(requests).collect { note ->
+        stub.routeChat(requests).effectTap { note ->
             println("Got message \"${note.message}\" at ${note.location.toStr()}")
         }
         println("Finished RouteChat")
     }
 
-    private fun generateOutgoingNotes(): Flow<RouteNote> = flow {
-        val notes = listOf(
-                RouteNote.newBuilder().apply {
-                    message = "First message"
-                    location = point(0, 0)
-                }.build(),
-                RouteNote.newBuilder().apply {
-                    message = "Second message"
-                    location = point(0, 0)
-                }.build(),
-                RouteNote.newBuilder().apply {
-                    message = "Third message"
-                    location = point(10000000, 0)
-                }.build(),
-                RouteNote.newBuilder().apply {
-                    message = "Fourth message"
-                    location = point(10000000, 10000000)
-                }.build(),
-                RouteNote.newBuilder().apply {
-                    message = "Last message"
-                    location = point(0, 0)
-                }.build()
-        )
-        for (note in notes) {
+    private fun generateOutgoingNotes(): Stream<RouteNote> =
+        Stream(
+            RouteNote.newBuilder().apply {
+                message = "First message"
+                location = point(0, 0)
+            }.build(),
+            RouteNote.newBuilder().apply {
+                message = "Second message"
+                location = point(0, 0)
+            }.build(),
+            RouteNote.newBuilder().apply {
+                message = "Third message"
+                location = point(10000000, 0)
+            }.build(),
+            RouteNote.newBuilder().apply {
+                message = "Fourth message"
+                location = point(10000000, 10000000)
+            }.build(),
+            RouteNote.newBuilder().apply {
+                message = "Last message"
+                location = point(0, 0)
+            }.build()
+        ).effectTap { note ->
             println("Sending message \"${note.message}\" at ${note.location.toStr()}")
-            emit(note)
-            delay(500)
+            sleep(500.milliseconds)
         }
-    }
 }
 
 fun main(args: Array<String>) {

@@ -16,20 +16,19 @@
 
 package io.grpc.kotlin
 
-import kotlinx.coroutines.channels.Channel
+import arrow.fx.coroutines.stream.concurrent.Queue
 
 /**
  * A simple helper allowing a notification of "ready" to be broadcast, and waited for.
  */
-internal class Readiness(
+internal class Readiness (
   private val isReallyReady: () -> Boolean
 ) {
-  // A CONFLATED channel never suspends to send, and two notifications of readiness are equivalent
-  // to one
-  private val channel = Channel<Unit>(Channel.CONFLATED)
+  // A CONFLATED channel never suspends to send, and two notifications of readiness are equivalent to one
+  private val channel = Queue.unsafeSliding<Unit>(1)
 
   fun onReady() {
-    if (!channel.offer(Unit)) {
+    if (!channel.tryOffer1(Unit)) {
       throw AssertionError(
         "Should be impossible; a CONFLATED channel should never return false on offer"
       )
@@ -38,7 +37,7 @@ internal class Readiness(
 
   suspend fun suspendUntilReady() {
     while (!isReallyReady()) {
-      channel.receive()
+      channel.dequeue1()
     }
   }
 }

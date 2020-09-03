@@ -15,6 +15,10 @@
  */
 package io.grpc.testing.integration
 
+import arrow.fx.coroutines.milliseconds
+import arrow.fx.coroutines.sleep
+import arrow.fx.coroutines.stream.Stream
+import arrow.fx.coroutines.stream.lastOrError
 import com.google.protobuf.ByteString
 import io.grpc.ForwardingServerCall
 import io.grpc.Metadata
@@ -23,31 +27,16 @@ import io.grpc.ServerCallHandler
 import io.grpc.ServerInterceptor
 import io.grpc.Status
 import java.util.Random
-import java.util.concurrent.Executor
-import java.util.concurrent.TimeUnit
 import kotlin.math.min
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.asFlow
-import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.flatMapConcat
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.fold
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.toList
 
 /**
  * Implementation of the business logic for the TestService. Uses an executor to schedule chunks
  * sent in response streams.
  */
-@ExperimentalCoroutinesApi
-@FlowPreview // most of these methods are graduating imminently but that has not yet landed
 class TestServiceImpl(
-  executor: Executor
-) : TestServiceGrpcKt.TestServiceCoroutineImplBase(executor.asCoroutineDispatcher()) {
+//  executor: Executor
+//) : TestServiceGrpcKt.TestServiceCoroutineImplBase(executor.asCoroutineDispatcher()) {
+) : TestServiceGrpcKt.TestServiceCoroutineImplBase() {
   private val random = Random()
   private val compressableBuffer: ByteString = ByteString.copyFrom(ByteArray(1024))
 
@@ -74,27 +63,25 @@ class TestServiceImpl(
 
   override fun streamingOutputCall(
     request: Messages.StreamingOutputCallRequest
-  ): Flow<Messages.StreamingOutputCallResponse> {
-    return flow {
-      var offset = 0
-      for (params in request.responseParametersList) {
-        delay(timeMillis = TimeUnit.MICROSECONDS.toMillis(params.intervalUs.toLong()))
-        emit(
-          Messages.StreamingOutputCallResponse
-            .newBuilder()
-            .apply {
-              payload = generatePayload(compressableBuffer, offset, params.size)
-            }
-            .build()
-        )
+  ): Stream<Messages.StreamingOutputCallResponse> {
+    var offset = 0
+    return Stream.iterable(request.responseParametersList)
+      .effectMap { params: Messages.ResponseParameters ->
+        sleep(params.intervalUs.milliseconds)
+        val offsetPayload = offset
         offset += params.size
         offset %= compressableBuffer.size()
+        Messages.StreamingOutputCallResponse
+          .newBuilder()
+          .apply {
+            payload = generatePayload(compressableBuffer, offsetPayload, params.size)
+          }
+          .build()
       }
-    }
   }
 
   override suspend fun streamingInputCall(
-    requests: Flow<Messages.StreamingInputCallRequest>
+    requests: Stream<Messages.StreamingInputCallRequest>
   ): Messages.StreamingInputCallResponse =
     Messages.StreamingInputCallResponse
       .newBuilder()
@@ -104,9 +91,9 @@ class TestServiceImpl(
       .build()
 
   override fun fullDuplexCall(
-    requests: Flow<Messages.StreamingOutputCallRequest>
-  ): Flow<Messages.StreamingOutputCallResponse> =
-    requests.flatMapConcat {
+    requests: Stream<Messages.StreamingOutputCallRequest>
+  ): Stream<Messages.StreamingOutputCallResponse> =
+    requests.flatMap {
       if (it.hasResponseStatus()) {
         throw Status
           .fromCodeValue(it.responseStatus.code)
@@ -117,12 +104,9 @@ class TestServiceImpl(
     }
 
   override fun halfDuplexCall(
-    requests: Flow<Messages.StreamingOutputCallRequest>
-  ): Flow<Messages.StreamingOutputCallResponse> =
-    flow {
-      val requestList = requests.toList()
-      emitAll(requestList.asFlow().flatMapConcat { streamingOutputCall(it) })
-    }
+    requests: Stream<Messages.StreamingOutputCallRequest>
+  ): Stream<Messages.StreamingOutputCallResponse> =
+    requests.flatMap { streamingOutputCall(it) }
 
   companion object {
     /** Returns interceptors necessary for full service implementation.  */
@@ -134,7 +118,7 @@ class TestServiceImpl(
       echoRequestMetadataInTrailers(Util.ECHO_TRAILING_METADATA_KEY)
     )
 
-    suspend fun Flow<Int>.sum() = fold(0) { a, b -> a + b }
+    suspend fun Stream<Int>.sum() = fold(0) { a, b -> a + b }.lastOrError()
 
     /**
      * Generates a payload of desired type and size. Reads compressableBuffer or

@@ -16,20 +16,19 @@
 
 package io.grpc.kotlin
 
+import arrow.core.None
+import arrow.core.Option
+import arrow.core.Some
+import arrow.fx.coroutines.ExitCase
+import arrow.fx.coroutines.stream.Stream
+import arrow.fx.coroutines.stream.concurrent.Queue
+import arrow.fx.coroutines.stream.drain
+import arrow.fx.coroutines.stream.flatten
+import arrow.fx.coroutines.stream.terminateOnNone
 import io.grpc.CallOptions
 import io.grpc.ClientCall
 import io.grpc.MethodDescriptor
 import io.grpc.Status
-import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import io.grpc.Channel as GrpcChannel
 import io.grpc.Metadata as GrpcMetadata
 
@@ -75,7 +74,7 @@ object ClientCalls {
     { unaryRpc(channel, method, it, callOptions, headers()) }
 
   /**
-   * Returns a [Flow] which launches the specified server-streaming RPC and emits the responses.
+   * Returns a [Stream] which launches the specified server-streaming RPC and emits the responses.
    */
   fun <RequestT, ResponseT> serverStreamingRpc(
     channel: GrpcChannel,
@@ -83,7 +82,7 @@ object ClientCalls {
     request: RequestT,
     callOptions: CallOptions = CallOptions.DEFAULT,
     headers: GrpcMetadata = GrpcMetadata()
-  ): Flow<ResponseT> {
+  ): Stream<ResponseT> {
     require(method.type == MethodDescriptor.MethodType.SERVER_STREAMING) {
       "Expected a server streaming RPC method, but got $method"
     }
@@ -107,26 +106,27 @@ object ClientCalls {
     method: MethodDescriptor<RequestT, ResponseT>,
     callOptions: CallOptions = CallOptions.DEFAULT,
     headers: suspend () -> GrpcMetadata = { GrpcMetadata() }
-  ): (RequestT) -> Flow<ResponseT> = {
-    flow {
+  ): (RequestT) -> Stream<ResponseT> = { request ->
+    Stream.effect {
       serverStreamingRpc(
         channel,
         method,
-        it,
+        request,
         callOptions,
         headers()
-      ).collect { emit(it) }
-    }
+      )
+    }.flatten()
   }
+
 
   /**
    * Launches a client-streaming RPC on the specified channel, suspending until the server returns
-   * the result.  The caller is expected to provide a [Flow] of requests.
+   * the result. The caller is expected to provide a [Stream] of requests.
    */
   suspend fun <RequestT, ResponseT> clientStreamingRpc(
     channel: GrpcChannel,
     method: MethodDescriptor<RequestT, ResponseT>,
-    requests: Flow<RequestT>,
+    requests: Stream<RequestT>,
     callOptions: CallOptions = CallOptions.DEFAULT,
     headers: GrpcMetadata = GrpcMetadata()
   ): ResponseT {
@@ -153,7 +153,7 @@ object ClientCalls {
     method: MethodDescriptor<RequestT, ResponseT>,
     callOptions: CallOptions = CallOptions.DEFAULT,
     headers: suspend () -> GrpcMetadata = { GrpcMetadata() }
-  ): suspend (Flow<RequestT>) -> ResponseT =
+  ): suspend (Stream<RequestT>) -> ResponseT =
     {
       clientStreamingRpc(
         channel,
@@ -165,7 +165,7 @@ object ClientCalls {
     }
 
   /**
-   * Returns a [Flow] which launches the specified bidirectional-streaming RPC, collecting the
+   * Returns a [Stream] which launches the specified bidirectional-streaming RPC, collecting the
    * requests flow, sending them to the server, and emitting the responses.
    *
    * Cancelling collection of the flow cancels the RPC upstream and collection of the requests.
@@ -175,10 +175,10 @@ object ClientCalls {
   fun <RequestT, ResponseT> bidiStreamingRpc(
     channel: GrpcChannel,
     method: MethodDescriptor<RequestT, ResponseT>,
-    requests: Flow<RequestT>,
+    requests: Stream<RequestT>,
     callOptions: CallOptions = CallOptions.DEFAULT,
     headers: GrpcMetadata = GrpcMetadata()
-  ): Flow<ResponseT> {
+  ): Stream<ResponseT> {
     check(method.type == MethodDescriptor.MethodType.BIDI_STREAMING) {
       "Expected a bidi streaming method, but got $method"
     }
@@ -202,18 +202,17 @@ object ClientCalls {
     method: MethodDescriptor<RequestT, ResponseT>,
     callOptions: CallOptions = CallOptions.DEFAULT,
     headers: suspend () -> GrpcMetadata = { GrpcMetadata() }
-  ): (Flow<RequestT>) -> Flow<ResponseT> =
-    {
-      flow {
-        bidiStreamingRpc(
-          channel,
-          method,
-          it,
-          callOptions,
-          headers()
-        ).collect { emit(it) }
-      }
-    }
+  ): (Stream<RequestT>) -> Stream<ResponseT> = {
+    Stream.effect {
+      bidiStreamingRpc(
+        channel,
+        method,
+        it,
+        callOptions,
+        headers()
+      )
+    }.flatten()
+  }
 
   /** The client's request(s). */
   private sealed class Request<RequestT> {
@@ -237,22 +236,26 @@ object ClientCalls {
       }
     }
 
-    class Flowing<RequestT>(private val requestFlow: Flow<RequestT>) : Request<RequestT>() {
+    class Flowing<RequestT>(private val requestStream: Stream<RequestT>) : Request<RequestT>() {
       override suspend fun sendTo(
         clientCall: ClientCall<RequestT, *>,
         readiness: Readiness
       ) {
+        println("ClientCalls.Flowing.suspendUntilReady")
         readiness.suspendUntilReady()
-        requestFlow.collect { request ->
+        println("ClientCalls.Flowing.requestStream.effectMap")
+        requestStream.effectMap { request: RequestT ->
+          println("ClientCalls.Flowing.requestStream.effectMap.sendMessage: $request")
           clientCall.sendMessage(request)
+          println("ClientCalls.Flowing.requestStream.effectMap.suspendUntilReady")
           readiness.suspendUntilReady()
-        }
+        }.drain()
       }
     }
   }
 
   /**
-   * Returns a [Flow] that, when collected, issues the specified RPC with the specified request
+   * Returns a [Stream] that, when collected, issues the specified RPC with the specified request
    * on the specified channel, and emits the responses.  This is intended to be the root
    * implementation of the client side of all Kotlin coroutine-based RPCs, with non-streaming
    * implementations simply emitting or receiving a single message in the appropriate direction.
@@ -263,68 +266,88 @@ object ClientCalls {
     callOptions: CallOptions,
     headers: GrpcMetadata,
     request: Request<RequestT>
-  ): Flow<ResponseT> = flow {
-    coroutineScope {
-      val clientCall: ClientCall<RequestT, ResponseT> =
-        channel.newCall<RequestT, ResponseT>(method, callOptions)
+  ): Stream<ResponseT> = Stream.effect {
 
-      /*
-       * We maintain a buffer of size 1 so onMessage never has to block: it only gets called after
-       * we request a response from the server, which only happens when responses is empty and
-       * there is room in the buffer.
-       */
-      val responses = Channel<ResponseT>(1)
-      val readiness = Readiness { clientCall.isReady }
+    val clientCall: ClientCall<RequestT, ResponseT> =
+      channel.newCall<RequestT, ResponseT>(method, callOptions)
 
-      clientCall.start(
-        object : ClientCall.Listener<ResponseT>() {
-          override fun onMessage(message: ResponseT) {
-            if (!responses.offer(message)) {
-              throw AssertionError("onMessage should never be called until responses is ready")
+    /*
+     * We maintain a buffer of size 1 so onMessage never has to block: it only gets called after
+     * we request a response from the server, which only happens when responses is empty and
+     * there is room in the buffer.
+     */
+    val responses = Queue.unsafeBounded<Option<ResponseT>>(1)
+    val readiness = Readiness {
+      println("ClientCalls Readiness call.isReady? ${clientCall.isReady}")
+      clientCall.isReady
+    }
+
+    val latch = UnsafePromise<Unit>()
+
+    clientCall.start(
+      object : ClientCall.Listener<ResponseT>() {
+        override fun onMessage(message: ResponseT) {
+          println("ClientCall.Listener.onMessage: $message")
+          if (!responses.tryOffer1(Some(message))) {
+            throw AssertionError("onMessage should never be called until responses is ready")
+          }
+        }
+
+        override fun onClose(status: Status, trailersMetadata: GrpcMetadata?) {
+          println("ClientCall.Listener.onClose($status, $trailersMetadata)")
+          if (status.isOk) latch.complete(Result.success(Unit))
+          else latch.complete(Result.failure(status.asException(trailersMetadata)))
+          println("onClose LATCH = ${latch.tryGet()}")
+          // close the queue
+          responses.tryOffer1(None)
+        }
+
+        override fun onReady() {
+          println("ClientCall.Listener.onReady")
+          readiness.onReady()
+        }
+      },
+      headers
+    )
+
+    Stream.effect {
+      println("ClientCalls.effect1: clientCall.request(1)")
+      clientCall.request(1)
+    }.flatMap {
+      responses
+        .dequeue()
+        .buffer(1)
+        .terminateOnNone()
+        .effectTap {
+          println("ClientCalls.responses.dequeue.effectTap: clientCall.request(1)")
+          clientCall.request(1)
+        }.concurrently(
+          Stream.effect {
+            println("ClientCalls.concurrently: request.sendTo(clientCall, readiness)")
+            request.sendTo(clientCall, readiness)
+            println("ClientCalls.concurrently: clientCall.halfClose()")
+            clientCall.halfClose()
+          }
+        )
+    }.onFinalizeCase { ex ->
+      println("ClientCalls.onFinalizeCase: $ex")
+      when (ex) {
+        is ExitCase.Cancelled -> clientCall.cancel("Collection of requests was cancelled", null)
+        is ExitCase.Failure -> clientCall.cancel("Collection of requests completed exceptionally", ex.failure)
+        else -> {
+          if (!latch.isEmpty()) {
+            val result = latch.tryGet()
+            if (result != null) {
+              result.fold(
+                onSuccess = { Unit },
+                onFailure = {
+                  clientCall.cancel("Collection of requests completed exceptionally", result.exceptionOrNull())
+                  throw result.exceptionOrNull()!!
+                })
             }
           }
-
-          override fun onClose(status: Status, trailersMetadata: GrpcMetadata) {
-            responses.close(
-              cause = if (status.isOk) null else status.asException(trailersMetadata)
-            )
-          }
-
-          override fun onReady() {
-            readiness.onReady()
-          }
-        },
-        headers
-      )
-
-      val sender = launch(CoroutineName("SendMessage worker for ${method.fullMethodName}")) {
-        try {
-          request.sendTo(clientCall, readiness)
-          clientCall.halfClose()
-        } catch (ex: Exception) {
-          clientCall.cancel("Collection of requests completed exceptionally", ex)
-          throw ex // propagate failure upward
         }
-      }
-
-      try {
-        clientCall.request(1)
-        for (response in responses) {
-          emit(response)
-          clientCall.request(1)
-        }
-      } catch (e: Exception) {
-        withContext(NonCancellable) {
-          sender.cancelAndJoin("Collection of responses completed exceptionally", e)
-          // we want sender to be done cancelling before we cancel clientCall, or it might try
-          // sending to a dead call, which results in ugly exception messages
-          clientCall.cancel("Collection of responses completed exceptionally", e)
-        }
-        throw e
-      }
-      if (!sender.isCompleted) {
-        sender.cancel("Collection of responses completed before collection of requests")
       }
     }
-  }
+  }.flatten()
 }

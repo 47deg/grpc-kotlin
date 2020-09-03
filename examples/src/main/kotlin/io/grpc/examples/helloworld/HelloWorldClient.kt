@@ -18,17 +18,17 @@ package io.grpc.examples.helloworld
 
 import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
-import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterCoroutineStub
-import java.io.Closeable
-import java.util.concurrent.TimeUnit
+import io.grpc.examples.helloworld.GreeterGrpcKt.GreeterArrowCoroutineStub
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
+import java.io.Closeable
+import java.util.concurrent.TimeUnit
 
 class HelloWorldClient constructor(private val channel: ManagedChannel) : Closeable {
-    private val stub: GreeterCoroutineStub = GreeterCoroutineStub(channel)
+    private val stub: GreeterArrowCoroutineStub = GreeterArrowCoroutineStub(channel)
 
     suspend fun greet(name: String) = coroutineScope {
         val request = HelloRequest.newBuilder().setName(name).build()
@@ -49,10 +49,10 @@ fun main(args: Array<String>) = runBlocking {
     val port = 50051
 
     val client = HelloWorldClient(
-            ManagedChannelBuilder.forAddress("localhost", port)
-                    .usePlaintext()
-                    .executor(Dispatchers.Default.asExecutor())
-                    .build())
+        ManagedChannelBuilder.forAddress("localhost", port)
+            .usePlaintext()
+            .executor(Dispatchers.Default.asExecutor())
+            .build())
 
     val user = args.singleOrNull() ?: "world"
     client.greet(user)

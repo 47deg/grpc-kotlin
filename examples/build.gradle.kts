@@ -6,7 +6,10 @@ import com.google.protobuf.gradle.protobuf
 import com.google.protobuf.gradle.protoc
 
 val grpcVersion = "1.30.0"
-val grpcKotlinVersion = "0.1.3"
+// val grpcKotlinVersion = "0.1.5"
+// To use the arrow fx coroutines implementation, remember to `publishToMavenLocal`
+// in the root project
+val grpcKotlinVersion = "0.2"
 val protobufVersion = "3.12.2"
 val coroutinesVersion = "1.3.7"
 
@@ -22,6 +25,8 @@ repositories {
     google()
     jcenter()
     mavenCentral()
+    maven(url = "https://dl.bintray.com/arrow-kt/arrow-kt/")
+    maven(url = "https://oss.jfrog.org/artifactory/oss-snapshot-local/") // for SNAPSHOT builds
 }
 
 dependencies {
@@ -30,7 +35,9 @@ dependencies {
     implementation("com.google.protobuf:protobuf-java-util:$protobufVersion")
     implementation("io.grpc:grpc-protobuf:$grpcVersion")
     implementation("io.grpc:grpc-stub:$grpcVersion")
+    // This should be using Stream published through mavenLocal
     implementation("io.grpc:grpc-kotlin-stub:$grpcKotlinVersion")
+    implementation("io.arrow-kt:arrow-fx-coroutines:0.11.0-SNAPSHOT")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutinesVersion")
     runtimeOnly("io.grpc:grpc-netty-shaded:$grpcVersion")
 }
@@ -38,6 +45,9 @@ dependencies {
 protobuf {
     protoc {
         artifact = "com.google.protobuf:protoc:$protobufVersion"
+    }
+    repositories {
+        mavenLocal()
     }
     plugins {
         id("grpc") {
