@@ -84,7 +84,7 @@ class RouteGuideClient private constructor(
     }
 
     fun generateRoutePoints(features: List<Feature>, numPoints: Int): Stream<Point> =
-        Stream(Unit).repeatN(numPoints.toLong())
+        Stream.range(1..numPoints)
             .effectMap {
                 val feature = features.random(random)
                 println("Visiting point ${feature.location.toStr()}")

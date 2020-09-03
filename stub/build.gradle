@@ -37,6 +37,7 @@ dependencies {
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:${rootProject.ext.coroutinesVersion}"
 
     // Arrow
+    implementation "io.arrow-kt:arrow-core-data:0.11.0-SNAPSHOT"
     implementation "io.arrow-kt:arrow-fx-coroutines:0.11.0-SNAPSHOT"
 
     // Grpc and Protobuf

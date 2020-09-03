@@ -15,13 +15,16 @@
  */
 package io.grpc.testing.integration
 
+import arrow.core.None
+import arrow.core.Option
+import arrow.core.Some
 import arrow.fx.coroutines.Environment
-import arrow.fx.coroutines.Promise
 import arrow.fx.coroutines.milliseconds
 import arrow.fx.coroutines.sleep
 import arrow.fx.coroutines.stream.Stream
 import arrow.fx.coroutines.stream.concurrent.Queue
 import arrow.fx.coroutines.stream.drain
+import arrow.fx.coroutines.stream.filterOption
 import arrow.fx.coroutines.stream.firstOrError
 import arrow.fx.coroutines.stream.handleErrorWith
 import arrow.fx.coroutines.stream.lastOrError
@@ -1044,21 +1047,20 @@ abstract class AbstractInteropTest {
           .build()
       )
 
-      val requestChannel = Queue.unsafeUnbounded<StreamingOutputCallRequest>()
+      val requestChannel = Queue.unsafeUnbounded<Option<StreamingOutputCallRequest>>()
 
-      val responses = stub.fullDuplexCall(requestChannel.dequeue()).produceIn()
+      val responses = stub.fullDuplexCall(requestChannel.dequeue().filterOption()).produceIn()
 
-      requestChannel.enqueue1(requests[0])
+      requestChannel.enqueue1(Some(requests[0]))
       assertResponse(goldenResponses[0], responses.dequeue1())
       // Initiate graceful shutdown.
       channel.shutdown()
-      requestChannel.enqueue1(requests[1])
+      requestChannel.enqueue1(Some(requests[1]))
       assertResponse(goldenResponses[1], responses.dequeue1())
       // The previous ping-pong could have raced with the shutdown, but this one certainly shouldn't.
-      requestChannel.enqueue1(requests[2])
+      requestChannel.enqueue1(Some(requests[2]))
       assertResponse(goldenResponses[2], responses.dequeue1())
-      // assertFalse(responses.isClosedForReceive) TODO replacement of this?
-      // requestChannel.close()
+      requestChannel.enqueue1(None)
       assertThat(responses.dequeue().toList()).isEmpty()
     }
   }
@@ -1245,14 +1247,14 @@ abstract class AbstractInteropTest {
       )
       .build()
     runBlocking {
-      val caught = Promise<Throwable>()
+      val caught = UnsafePromise<Throwable>()
       val responses = stub.fullDuplexCall(Stream(request))
         .handleErrorWith {
-          Stream.effect { caught.complete(it) }
-          Stream.raiseError(it)
+          caught.complete(Result.success(it))
+          Stream(it)
         }.toList()
       assertThat(responses).isEmpty()
-      assertEquals(Status.DEADLINE_EXCEEDED.code, (caught.get() as StatusException).status.code)
+      assertEquals(Status.DEADLINE_EXCEEDED.code, (caught.join() as StatusException).status.code)
     }
   }
 
@@ -1682,7 +1684,7 @@ abstract class AbstractInteropTest {
    * Constructor for tests.
    */
   init {
-    var timeout: TestRule = Timeout.seconds(60)
+    var timeout: TestRule = Timeout.seconds(10)
     try {
       timeout = DisableOnDebug(timeout)
     } catch (t: Throwable) { // This can happen on Android, which lacks some standard Java class.
